@@ -1,0 +1,28 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model ReleasePR {
+  id             String   @id
+  title          String
+  jiraKey        String?
+  author         String
+
+  releaseBranch  String
+  mainPrId       String?
+  syncStatus     String
+
+  description    String?
+
+  mergedAt       DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  mergeCommitSha String?
+  commitShas     Json?
+  changedFiles   Json?
+}
