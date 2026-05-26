@@ -1,6 +1,6 @@
 -- CreateTable
 CREATE TABLE "ReleasePR" (
-    "id" TEXT NOT NULL,
+    "id" TEXT NOT NULL PRIMARY KEY,
     "title" TEXT NOT NULL,
     "jiraKey" TEXT,
     "author" TEXT NOT NULL,
@@ -8,12 +8,10 @@ CREATE TABLE "ReleasePR" (
     "mainPrId" TEXT,
     "syncStatus" TEXT NOT NULL,
     "description" TEXT,
-    "mergedAt" TIMESTAMP(3),
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "mergedAt" DATETIME,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
     "mergeCommitSha" TEXT,
     "commitShas" JSONB,
-    "changedFiles" JSONB,
-
-    CONSTRAINT "ReleasePR_pkey" PRIMARY KEY ("id")
+    "changedFiles" JSONB
 );

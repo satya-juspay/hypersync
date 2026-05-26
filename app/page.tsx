@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   RefreshCw,
@@ -9,71 +9,160 @@ import {
   TrendingUp,
   AlertTriangle,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
+  X,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import { Navbar } from "@/components/navbar";
 import { StatusBadge } from "@/components/status-badge";
 import { prUrl } from "@/lib/bitbucket";
-import type { ReleasePR } from "@/lib/types";
+import {
+  syncAndLoad,
+  updateDashboardViewState,
+  useHyperSyncStore,
+} from "@/lib/hypersync-store";
+import type {
+  DashboardPageSize,
+  DashboardSortDirection,
+  DashboardSortOption,
+  DashboardStatusFilter,
+} from "@/lib/hypersync-store";
+import type { ReleasePR } from "@/types/hypersync";
 
 const REPO = "hyper-widget";
-const CACHE_TTL = 30_000; // ms
-let _cache: { data: ReleasePR[]; ts: number } | null = null;
+const PAGE_SIZES = [10, 50, 100] as const;
+const STATUS_FILTERS = [
+  { value: "ALL", label: "All" },
+  { value: "MERGED", label: "Merged" },
+  { value: "OPEN", label: "Open" },
+  { value: "DECLINED", label: "Declined" },
+  { value: "INVALID", label: "Invalid" },
+  { value: "APPROVED", label: "Approved" },
+  { value: "MISSING", label: "Missing" },
+] satisfies Array<{ value: StatusFilter; label: string }>;
+const SORT_OPTIONS = [
+  { value: "createdBy", label: "Created By" },
+  { value: "mergedBy", label: "Merged By" },
+  { value: "mainPrMergedBy", label: "Main PR Merged By" },
+  { value: "releasePrMergedBy", label: "Release PR Merged By" },
+] satisfies Array<{ value: SortOption; label: string }>;
+
+type StatusFilter = DashboardStatusFilter;
+type SortOption = DashboardSortOption;
+type SortDirection = DashboardSortDirection;
 
 export default function Home() {
   const router = useRouter();
-  const [data, setData] = useState<ReleasePR[]>(_cache?.data ?? []);
-  const [loading, setLoading] = useState(_cache === null);
-  const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-
-  const fetchData = useCallback((force = false) => {
-    if (!force && _cache && Date.now() - _cache.ts < CACHE_TTL) {
-      setData(_cache.data);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    fetch("/api/release-prs")
-      .then((r) => r.json())
-      .then((json) => {
-        if (!json.success) throw new Error(json.error || "Unknown error");
-        _cache = { data: json.data, ts: Date.now() };
-        setData(json.data);
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, []);
+  const {
+    releasePRs: data,
+    syncStatus,
+    dashboardView,
+    loading,
+    refreshing,
+    initialized,
+    error,
+  } = useHyperSyncStore();
+  const {
+    query,
+    pageSize,
+    currentPage,
+    statusFilter,
+    sortBy,
+    sortDirection,
+  } = dashboardView;
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    let syncHandled = false;
+    let disposed = false;
 
-  // Metrics
-  const total = data.length;
-  const unsynced = data.filter((p) => p.syncStatus !== "SYNCED").length;
-  const synced = data.filter((p) => p.syncStatus === "SYNCED").length;
-
-  // Risk leaderboard — top 3 authors with most unsynced PRs
-  const riskMap: Record<string, number> = {};
-  data
-    .filter((p) => p.syncStatus !== "SYNCED")
-    .forEach((p) => {
-      riskMap[p.author] = (riskMap[p.author] || 0) + 1;
+    void syncAndLoad({ quick: true }).then((started) => {
+      syncHandled = started;
     });
-  const leaderboard = Object.entries(riskMap)
-    .sort((a, b) => b[1] - a[1]);
 
-  // Search filter
-  const filtered = data.filter((p) => {
+    const fallbackTimer = window.setTimeout(() => {
+      if (!disposed && !syncHandled) {
+        void syncAndLoad({ quick: true, force: true });
+      }
+    }, 1000);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(fallbackTimer);
+    };
+  }, []);
+
+  const { total, unsynced, merged, approved } = useMemo(() => {
+    let unsyncedCount = 0;
+    let mergedCount = 0;
+    let approvedCount = 0;
+
+    for (const pr of data) {
+      if (pr.syncStatus === "MERGED") mergedCount += 1;
+      if (pr.syncStatus === "APPROVED") approvedCount += 1;
+      if (pr.syncStatus !== "MERGED" && pr.syncStatus !== "APPROVED") {
+        unsyncedCount += 1;
+      }
+    }
+
+    return {
+      total: data.length,
+      unsynced: unsyncedCount,
+      merged: mergedCount,
+      approved: approvedCount,
+    };
+  }, [data]);
+
+  const { leaderboard, branchLeaderboard } = useMemo(() => {
+    const riskMap: Record<string, number> = {};
+    const branchRiskMap: Record<string, number> = {};
+
+    for (const pr of data) {
+      if (pr.syncStatus === "MERGED" || pr.syncStatus === "APPROVED") {
+        continue;
+      }
+
+      riskMap[pr.author] = (riskMap[pr.author] || 0) + 1;
+      branchRiskMap[pr.releaseBranch] =
+        (branchRiskMap[pr.releaseBranch] || 0) + 1;
+    }
+
+    return {
+      leaderboard: Object.entries(riskMap).sort((a, b) => b[1] - a[1]),
+      branchLeaderboard: Object.entries(branchRiskMap).sort(
+        (a, b) => b[1] - a[1]
+      ),
+    };
+  }, [data]);
+
+  const filtered = useMemo(() => {
     const q = query.toLowerCase();
-    return (
-      p.id.includes(q) ||
-      p.title.toLowerCase().includes(q) ||
-      p.author.toLowerCase().includes(q) ||
-      p.releaseBranch.toLowerCase().includes(q)
-    );
-  });
+
+    return data
+      .filter((p) => {
+        const matchesSearch =
+          p.id.includes(q) ||
+          p.title.toLowerCase().includes(q) ||
+          p.author.toLowerCase().includes(q) ||
+          p.releaseBranch.toLowerCase().includes(q);
+        const matchesStatus =
+          statusFilter === "ALL" || p.syncStatus === statusFilter;
+
+        return matchesSearch && matchesStatus;
+      })
+      .sort((a, b) => compareReleasePRs(a, b, sortBy, sortDirection));
+  }, [data, query, sortBy, sortDirection, statusFilter]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const activePage = Math.min(currentPage, totalPages);
+  const pageStartIndex = (activePage - 1) * pageSize;
+  const pageEndIndex = pageStartIndex + pageSize;
+  const paginated = filtered.slice(pageStartIndex, pageEndIndex);
+  const pageStart = filtered.length === 0 ? 0 : pageStartIndex + 1;
+  const pageEnd = Math.min(pageEndIndex, filtered.length);
+  const initialLoading = !initialized && data.length === 0 && !error;
 
   const rankColors = [
     "from-red-500 to-red-400",
@@ -85,7 +174,11 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-[#f0f4ff]">
-      <Navbar onRefresh={() => fetchData(true)} refreshing={loading} />
+      <Navbar
+        onRefresh={() => void syncAndLoad()}
+        refreshing={refreshing}
+        lastSyncedAt={syncStatus.lastSyncedAt}
+      />
 
       <main className="mx-auto max-w-7xl px-6 py-4 space-y-4">
         {error && (
@@ -94,8 +187,12 @@ export default function Home() {
           </div>
         )}
 
+        {initialLoading ? (
+          <InitialSyncLoading />
+        ) : (
+          <>
         {/* SECTION 2 — SUMMARY CARDS */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <div className="rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
               <p className="text-sm font-medium text-blue-500">Total Release PRs</p>
@@ -106,7 +203,7 @@ export default function Home() {
 
           <div className="rounded-xl border border-red-200 bg-red-50/40 p-5 shadow-sm">
             <div className="flex items-center justify-between">
-              <p className="text-sm font-medium text-red-600">Unsynced PRs</p>
+              <p className="text-sm font-medium text-red-600">Total Unsynced PRs</p>
               <AlertTriangle className="h-4 w-4 text-red-500" />
             </div>
             <p className="mt-2 text-4xl font-bold text-red-600">{unsynced}</p>
@@ -114,10 +211,18 @@ export default function Home() {
 
           <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-5 shadow-sm">
             <div className="flex items-center justify-between">
-              <p className="text-sm font-medium text-emerald-600">Synced Master PRs</p>
+              <p className="text-sm font-medium text-emerald-600">Merged PRs</p>
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
             </div>
-            <p className="mt-2 text-4xl font-bold text-emerald-600">{synced}</p>
+            <p className="mt-2 text-4xl font-bold text-emerald-600">{merged}</p>
+          </div>
+
+          <div className="rounded-xl border border-teal-200 bg-teal-50/40 p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-teal-600">Approved PRs</p>
+              <CheckCircle2 className="h-4 w-4 text-teal-500" />
+            </div>
+            <p className="mt-2 text-4xl font-bold text-teal-600">{approved}</p>
           </div>
         </div>
 
@@ -162,6 +267,48 @@ export default function Home() {
           </div>
         </div>
 
+        <div className="rounded-xl border border-blue-100 bg-white shadow-sm">
+          <div className="border-b border-blue-50 bg-blue-50/60 px-5 py-3">
+            <h2 className="text-sm font-semibold text-blue-800">
+              Top Release Branches — Unsynced PRs
+            </h2>
+          </div>
+          <div className="p-5">
+            {branchLeaderboard.length > 0 ? (
+              <div className="flex gap-4 overflow-x-auto pb-1">
+                {branchLeaderboard.map(([releaseBranch, count], i) => (
+                  <div
+                    key={releaseBranch}
+                    className="flex shrink-0 items-center gap-3 rounded-xl border border-blue-100 bg-blue-50/40 px-5 py-4"
+                  >
+                    <div
+                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${
+                        rankColors[i] ?? "from-slate-400 to-slate-300"
+                      } text-sm font-bold text-white shadow`}
+                    >
+                      #{i + 1}
+                    </div>
+                    <div>
+                      <p className="font-mono text-sm font-semibold text-slate-800">
+                        {releaseBranch}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {count} unsynced PR{count > 1 ? "s" : ""}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              !loading && (
+                <p className="text-center text-sm font-medium text-emerald-600">
+                  All release branches are synced.
+                </p>
+              )
+            )}
+          </div>
+        </div>
+
         {/* SECTION 4 — SEARCH */}
         <div className="flex items-center justify-between gap-4">
           <div className="relative max-w-md flex-1">
@@ -169,22 +316,143 @@ export default function Home() {
             <input
               type="text"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                updateDashboardViewState({
+                  query: e.target.value,
+                  currentPage: 1,
+                });
+              }}
               placeholder="Search by PR ID, title, author, branch…"
               className="w-full rounded-lg border border-blue-200 bg-white py-2 pl-9 pr-4 text-sm text-blue-900 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
             />
           </div>
-          {!loading && (
-            <p className="shrink-0 text-xs text-blue-400">
-              Showing <strong className="text-blue-700">{filtered.length}</strong> of{" "}
-              <strong className="text-blue-700">{total}</strong> PRs
-            </p>
-          )}
+          <div className="flex shrink-0 items-center gap-3">
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setFiltersOpen((open) => !open)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50"
+              >
+                <Filter className="h-3.5 w-3.5" />
+                Filters
+              </button>
+              {filtersOpen && (
+                <div className="absolute right-0 top-full z-30 mt-2 w-72 rounded-lg border border-blue-100 bg-white p-4 shadow-xl">
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="text-sm font-semibold text-blue-900">
+                      Filters
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setFiltersOpen(false)}
+                      title="Close filters"
+                      className="rounded-md p-1 text-blue-300 transition hover:bg-blue-50 hover:text-blue-600"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-blue-400">
+                      Status
+                      <select
+                        value={statusFilter}
+                        onChange={(e) => {
+                          updateDashboardViewState({
+                            statusFilter: e.target.value as StatusFilter,
+                            currentPage: 1,
+                          });
+                        }}
+                        className="mt-1.5 w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-medium normal-case tracking-normal text-blue-900 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                      >
+                        {STATUS_FILTERS.map((status) => (
+                          <option key={status.value} value={status.value}>
+                            {status.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <div>
+                      <span className="block text-xs font-semibold uppercase tracking-wider text-blue-400">
+                        Sort By
+                      </span>
+                      <div className="mt-1.5 flex gap-2">
+                        <select
+                          value={sortBy}
+                          onChange={(e) => {
+                            updateDashboardViewState({
+                              sortBy: e.target.value as SortOption,
+                              currentPage: 1,
+                            });
+                          }}
+                          className="min-w-0 flex-1 rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-medium text-blue-900 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                        >
+                          {SORT_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            updateDashboardViewState((view) => ({
+                              sortDirection:
+                                view.sortDirection === "asc" ? "desc" : "asc",
+                              currentPage: 1,
+                            }));
+                          }}
+                          title={
+                            sortDirection === "asc"
+                              ? "Sorted ascending"
+                              : "Sorted descending"
+                          }
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-blue-200 bg-white text-blue-600 shadow-sm transition hover:bg-blue-50"
+                        >
+                          {sortDirection === "asc" ? (
+                            <ArrowUp className="h-4 w-4" />
+                          ) : (
+                            <ArrowDown className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+            <label className="flex items-center gap-2 text-xs font-medium text-blue-500">
+              Rows
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  updateDashboardViewState({
+                    pageSize: Number(e.target.value) as DashboardPageSize,
+                    currentPage: 1,
+                  });
+                }}
+                className="rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-xs font-semibold text-blue-800 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              >
+                {PAGE_SIZES.map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {!loading && (
+              <p className="text-xs text-blue-400">
+                Showing <strong className="text-blue-700">{pageStart}-{pageEnd}</strong>{" "}
+                of <strong className="text-blue-700">{filtered.length}</strong> PRs
+              </p>
+            )}
+          </div>
         </div>
 
         {/* SECTION 5 — MASTER DATA TABLE */}
         <div className="overflow-hidden rounded-xl border border-blue-100 bg-white shadow-sm">
-          {loading ? (
+          {loading && data.length === 0 ? (
             <div className="py-16 text-center text-sm text-blue-400">
               <RefreshCw className="mx-auto mb-2 h-5 w-5 animate-spin" />
               Loading release PRs…
@@ -214,9 +482,10 @@ export default function Home() {
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((pr) => (
+                  paginated.map((pr) => (
                     <tr
                       key={pr.id}
+                      onMouseEnter={() => router.prefetch(`/pr/${pr.id}`)}
                       onClick={() => router.push(`/pr/${pr.id}`)}
                       className="cursor-pointer transition hover:bg-blue-50/40"
                     >
@@ -274,10 +543,134 @@ export default function Home() {
             </table>
             </div>
           )}
+          {!loading && filtered.length > 0 && (
+            <div className="flex items-center justify-between border-t border-blue-50 bg-blue-50/40 px-4 py-3">
+              <p className="text-xs font-medium text-blue-500">
+                Page <span className="text-blue-800">{activePage}</span> of{" "}
+                <span className="text-blue-800">{totalPages}</span>
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateDashboardViewState({
+                      currentPage: Math.max(1, activePage - 1),
+                    })
+                  }
+                  disabled={activePage === 1}
+                  title="Previous page"
+                  className="rounded-lg border border-blue-100 bg-white p-1.5 text-blue-500 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateDashboardViewState({
+                      currentPage: Math.min(totalPages, activePage + 1),
+                    })
+                  }
+                  disabled={activePage === totalPages}
+                  title="Next page"
+                  className="rounded-lg border border-blue-100 bg-white p-1.5 text-blue-500 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
+          </>
+        )}
       </main>
     </div>
   );
 }
 
+function InitialSyncLoading() {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-blue-100 bg-white p-8 shadow-sm">
+        <div className="flex flex-col items-center justify-center py-8 text-center">
+          <RefreshCw className="mb-4 h-8 w-8 animate-spin text-blue-500" />
+          <h1 className="text-lg font-semibold text-blue-900">
+            Loading sync data
+          </h1>
+          <p className="mt-2 max-w-md text-sm text-blue-500">
+            Fetching release and main PRs from the current sync store.
+          </p>
+        </div>
+      </div>
 
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div
+            key={index}
+            className="h-28 animate-pulse rounded-xl border border-blue-100 bg-white p-5 shadow-sm"
+          >
+            <div className="h-4 w-28 rounded bg-blue-100" />
+            <div className="mt-5 h-9 w-16 rounded bg-blue-100" />
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
+        <div className="mb-4 h-4 w-48 animate-pulse rounded bg-blue-100" />
+        <div className="space-y-3">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <div
+              key={index}
+              className="grid animate-pulse grid-cols-[72px_1fr] gap-3 sm:grid-cols-[80px_120px_1fr_140px] sm:gap-4"
+            >
+              <div className="h-4 rounded bg-blue-50" />
+              <div className="h-4 rounded bg-blue-50" />
+              <div className="h-4 rounded bg-blue-50" />
+              <div className="h-4 rounded bg-blue-50" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function compareReleasePRs(
+  a: ReleasePR,
+  b: ReleasePR,
+  sortBy: SortOption,
+  sortDirection: SortDirection
+) {
+  const aValue = sortValue(a, sortBy);
+  const bValue = sortValue(b, sortBy);
+
+  if (!aValue && bValue) return 1;
+  if (aValue && !bValue) return -1;
+
+  const byText = aValue.localeCompare(bValue, undefined, {
+    sensitivity: "base",
+  });
+  if (byText !== 0) return sortDirection === "asc" ? byText : -byText;
+
+  const aTime = Date.parse(a.mergedAt ?? a.updatedAt ?? "");
+  const bTime = Date.parse(b.mergedAt ?? b.updatedAt ?? "");
+  const byDate =
+    (Number.isNaN(aTime) ? 0 : aTime) - (Number.isNaN(bTime) ? 0 : bTime);
+
+  return sortDirection === "asc" ? byDate : -byDate;
+}
+
+function sortValue(pr: ReleasePR, sortBy: SortOption) {
+  if (sortBy === "createdBy") {
+    return pr.createdBy ?? pr.author;
+  }
+
+  if (sortBy === "mainPrMergedBy") {
+    return pr.mainPrMergedBy ?? "";
+  }
+
+  if (sortBy === "releasePrMergedBy") {
+    return pr.releasePrMergedBy ?? pr.mergedBy ?? "";
+  }
+
+  return pr.mergedBy ?? pr.releasePrMergedBy ?? pr.mainPrMergedBy ?? "";
+}

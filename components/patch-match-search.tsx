@@ -1,0 +1,245 @@
+"use client";
+
+import { useState } from "react";
+import { ExternalLink, Loader2, Search, Target } from "lucide-react";
+import {
+  getHyperSyncStoreSnapshot,
+  invalidateSyncResponseCache,
+  syncAndLoad,
+  useHyperSyncStore,
+} from "@/lib/hypersync-store";
+import {
+  findPatchMatchesFromFingerprints,
+  type PatchScore,
+} from "@/lib/patch-score";
+
+type PatchMatch = PatchScore & {
+  mainPrId: string;
+  title: string;
+  author: string;
+  displayName: string | undefined;
+  status: string | undefined;
+  mergedAt: string | null;
+  bitbucketUrl: string;
+};
+
+type Props = {
+  releasePrId: string;
+  currentMainPrId: string | null;
+  releasePatchFingerprint: string | null;
+};
+
+export function PatchMatchSearch({
+  releasePrId,
+  currentMainPrId,
+  releasePatchFingerprint,
+}: Props) {
+  useHyperSyncStore();
+  const [matches, setMatches] = useState<PatchMatch[] | null>(null);
+  const [searched, setSearched] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [savingMainPrId, setSavingMainPrId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSearch() {
+    setLoading(true);
+    setError(null);
+
+    try {
+      let snapshot = getHyperSyncStoreSnapshot();
+
+      if (!snapshot.initialized || snapshot.mainPRs.length === 0) {
+        await syncAndLoad({ quick: true });
+        snapshot = getHyperSyncStoreSnapshot();
+      }
+
+      const releasePR = snapshot.releasePRs.find(
+        (pr) => pr.id === releasePrId
+      );
+      const fingerprint =
+        releasePR?.patchFingerprint ?? releasePatchFingerprint ?? null;
+
+      if (!fingerprint) {
+        throw new Error(
+          "Patch fingerprint is not available for this release PR"
+        );
+      }
+
+      const mainPRCandidates = snapshot.mainPRs.filter(
+        (pr) => pr.patchFingerprint
+      );
+
+      if (mainPRCandidates.length === 0) {
+        throw new Error(
+          "Main PR patch fingerprints are not available"
+        );
+      }
+
+      const scores = findPatchMatchesFromFingerprints(
+        fingerprint,
+        mainPRCandidates.map((pr) => ({
+          mainPrId: pr.id,
+          patchFingerprint: pr.patchFingerprint,
+        })),
+        { minScore: 0.6 }
+      );
+      const mainPRById = new Map(snapshot.mainPRs.map((pr) => [pr.id, pr]));
+      const nextMatches = scores
+        .map((score) => {
+          const mainPR = mainPRById.get(score.mainPrId);
+          if (!mainPR) return null;
+
+          return {
+            ...score,
+            title: mainPR.title,
+            author: mainPR.author,
+            displayName: mainPR.displayName,
+            status: mainPR.status,
+            mergedAt: mainPR.mergedAt ?? null,
+            bitbucketUrl: mainPR.bitbucketUrl,
+          };
+        })
+        .filter((match): match is PatchMatch => match !== null);
+
+      setMatches(nextMatches);
+      setSearched(mainPRCandidates.length);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to search patch matches"
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleUseMatch(mainPrId: string) {
+    setSavingMainPrId(mainPrId);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/sync/${releasePrId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mainPrId }),
+      });
+      const json = (await response.json()) as { success: boolean; error?: string };
+
+      if (!response.ok || !json.success) {
+        throw new Error(json.error ?? "Failed to update main PR");
+      }
+
+      invalidateSyncResponseCache();
+      await syncAndLoad({ quick: true, force: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update main PR");
+    } finally {
+      setSavingMainPrId(null);
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-blue-900">
+            Patch Score Matches
+          </h2>
+          <p className="mt-1 text-xs text-blue-400">
+            Scores stored main PR patch fingerprints in the browser.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleSearch()}
+          disabled={loading}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Search className="h-3.5 w-3.5" />
+          )}
+          Search Main PRs
+        </button>
+      </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      {matches === null ? (
+        <div className="rounded-lg border border-blue-50 bg-blue-50/40 px-4 py-3 text-sm text-blue-500">
+          Run a patch score search to find likely main PRs.
+        </div>
+      ) : matches.length === 0 ? (
+        <div className="rounded-lg border border-blue-50 bg-blue-50/40 px-4 py-3 text-sm text-blue-500">
+          No main PRs scored above 60% across {searched} candidates.
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-blue-100">
+          <table className="w-full min-w-[760px] text-sm">
+            <thead>
+              <tr className="border-b border-blue-100 bg-blue-50/60 text-left text-xs font-semibold uppercase tracking-wider text-blue-500">
+                <th className="px-4 py-3">Score</th>
+                <th className="px-4 py-3">Main PR</th>
+                <th className="px-4 py-3">Title</th>
+                <th className="px-4 py-3">Author</th>
+                <th className="px-4 py-3">Overlap</th>
+                <th className="w-20 px-4 py-3" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-blue-50">
+              {matches.map((match) => (
+                <tr key={match.mainPrId}>
+                  <td className="px-4 py-3 font-semibold text-blue-900">
+                    {(match.score * 100).toFixed(1)}%
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs">
+                    <a
+                      href={match.bitbucketUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-blue-600 hover:underline"
+                    >
+                      #{match.mainPrId}
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </td>
+                  <td className="max-w-xs px-4 py-3 text-slate-800">
+                    <span className="line-clamp-2">{match.title}</span>
+                  </td>
+                  <td className="px-4 py-3 text-blue-800">{match.author}</td>
+                  <td className="px-4 py-3 text-xs text-blue-500">
+                    {match.matchedFiles}/{match.totalFiles} files,{" "}
+                    {match.matchedAddedLines}/{match.totalAddedLines} added,{" "}
+                    {match.matchedRemovedLines}/{match.totalRemovedLines} removed
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => void handleUseMatch(match.mainPrId)}
+                      disabled={
+                        savingMainPrId !== null ||
+                        currentMainPrId === match.mainPrId
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {savingMainPrId === match.mainPrId ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Target className="h-3.5 w-3.5" />
+                      )}
+                      {currentMainPrId === match.mainPrId ? "Current" : "Use"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
