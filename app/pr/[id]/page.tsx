@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { Calendar, ExternalLink, GitBranch, Loader2, User } from "lucide-react";
 import { EditPRButton } from "@/components/edit-pr-button";
@@ -8,7 +8,7 @@ import { Navbar } from "@/components/navbar";
 import { PatchMatchSearch } from "@/components/patch-match-search";
 import { StatusBadge } from "@/components/status-badge";
 import { prUrl } from "@/lib/bitbucket";
-import { syncAndLoad, useHyperSyncStore } from "@/lib/hypersync-store";
+import type { ReleasePR } from "@/types/hypersync";
 
 const REPO = "hyper-widget";
 
@@ -21,6 +21,13 @@ type AdminAccess = {
 type AdminMeResponse = {
   success: boolean;
   access?: AdminAccess;
+  error?: string;
+};
+
+type ReleasePRResponse = {
+  success: boolean;
+  data?: ReleasePR;
+  syncStatus?: { isRunning: boolean; lastSynced: string | null };
   error?: string;
 };
 
@@ -62,81 +69,92 @@ function MetaCard({
 export default function PRDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
-  const { releasePRs, syncStatus, loading, refreshing, initialized, error } =
-    useHyperSyncStore();
+  const [pr, setPr] = useState<ReleasePR | null>(null);
   const [access, setAccess] = useState<AdminAccess | null>(null);
-  const [accessLoading, setAccessLoading] = useState(true);
-  const [accessError, setAccessError] = useState<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!initialized && !loading && !refreshing) {
-      void syncAndLoad({ quick: true });
+  const loadPR = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true);
+
+    try {
+      const response = await fetch(`/api/sync/${id}`, { cache: "no-store" });
+      const json = (await response.json()) as ReleasePRResponse;
+
+      if (!response.ok || !json.success || !json.data) {
+        throw new Error(json.error ?? `Release PR #${id} was not found`);
+      }
+
+      setPr(json.data);
+      setLastSyncedAt(json.syncStatus?.lastSynced ?? null);
+      setError(null);
+    } catch (err) {
+      setPr(null);
+      setError(err instanceof Error ? err.message : "Failed to load PR");
+    } finally {
+      if (showLoading) setLoading(false);
     }
-  }, [initialized, loading, refreshing]);
+  }, [id]);
 
   useEffect(() => {
     let disposed = false;
 
-    async function loadAccess() {
-      setAccessLoading(true);
-      setAccessError(null);
+    async function loadPage() {
+      setLoading(true);
+      setError(null);
 
       try {
-        const response = await fetch("/api/admins/me", { cache: "no-store" });
-        const json = (await response.json()) as AdminMeResponse;
+        const [prResponse, accessResponse] = await Promise.all([
+          fetch(`/api/sync/${id}`, { cache: "no-store" }),
+          fetch("/api/admins/me", { cache: "no-store" }),
+        ]);
+        const prJson = (await prResponse.json()) as ReleasePRResponse;
+        const accessJson = (await accessResponse.json()) as AdminMeResponse;
 
-        if (!response.ok || !json.success || !json.access) {
-          throw new Error(json.error ?? "Failed to load access");
+        if (!prResponse.ok || !prJson.success || !prJson.data) {
+          throw new Error(prJson.error ?? `Release PR #${id} was not found`);
+        }
+        if (!accessResponse.ok || !accessJson.success || !accessJson.access) {
+          throw new Error(accessJson.error ?? "Failed to load access");
         }
 
         if (!disposed) {
-          setAccess(json.access);
+          setPr(prJson.data);
+          setAccess(accessJson.access);
+          setLastSyncedAt(prJson.syncStatus?.lastSynced ?? null);
         }
       } catch (err) {
         if (!disposed) {
-          setAccessError(
-            err instanceof Error ? err.message : "Failed to load access"
-          );
-          setAccess(null);
+          setError(err instanceof Error ? err.message : "Failed to load PR");
         }
       } finally {
-        if (!disposed) {
-          setAccessLoading(false);
-        }
+        if (!disposed) setLoading(false);
       }
     }
 
-    void loadAccess();
-
+    void loadPage();
     return () => {
       disposed = true;
     };
-  }, []);
+  }, [id]);
 
-  const pr = useMemo(
-    () => releasePRs.find((releasePR) => releasePR.id === id) ?? null,
-    [id, releasePRs]
-  );
   const canEdit = Boolean(
     pr &&
       access?.isAuthenticated &&
       (access.canEditAnyPR ||
         normalizeEmail(access.email) === normalizeEmail(pr.author))
   );
-  const loadingPage =
-    (!initialized && releasePRs.length === 0 && !error) || accessLoading;
 
-  if (loadingPage) {
-    return <PRDetailLoadingView />;
-  }
+  if (loading) return <PRDetailLoadingView />;
 
   if (!pr) {
     return (
       <div className="min-h-screen bg-[#f0f4ff]">
-        <Navbar backHref="/" lastSyncedAt={syncStatus.lastSyncedAt} />
+        <Navbar backHref="/" lastSyncedAt={lastSyncedAt} />
         <main className="mx-auto max-w-5xl px-6 py-5">
           <div className="rounded-lg border border-blue-100 bg-white p-6 text-sm font-medium text-blue-900 shadow-sm">
-            PR #{id} was not found in the current sync data.
+            {error ?? `PR #${id} was not found in the current sync data.`}
           </div>
         </main>
       </div>
@@ -145,12 +163,12 @@ export default function PRDetailPage() {
 
   return (
     <div className="min-h-screen bg-[#f0f4ff]">
-      <Navbar backHref="/" lastSyncedAt={syncStatus.lastSyncedAt} />
+      <Navbar backHref="/" lastSyncedAt={lastSyncedAt} />
 
       <main className="mx-auto max-w-5xl space-y-5 px-6 py-5">
-        {(error || accessError) && (
+        {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error ?? accessError}
+            {error}
           </div>
         )}
 
@@ -190,6 +208,7 @@ export default function PRDetailPage() {
                 prId={pr.id}
                 currentMainPrId={pr.mainPrId ?? null}
                 currentUpdatedStatus={pr.updatedStatus ?? null}
+                onUpdated={() => loadPR()}
               />
             )}
           </div>
@@ -197,7 +216,7 @@ export default function PRDetailPage() {
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <MetaCard icon={<User className="h-3.5 w-3.5" />} label="Author">
-            {pr.author}
+            {pr.displayName || pr.author}
           </MetaCard>
           <MetaCard
             icon={<GitBranch className="h-3.5 w-3.5" />}
@@ -226,7 +245,7 @@ export default function PRDetailPage() {
           <PatchMatchSearch
             releasePrId={pr.id}
             currentMainPrId={pr.mainPrId ?? null}
-            releasePatchFingerprint={pr.patchFingerprint ?? null}
+            onUpdated={() => loadPR()}
           />
         )}
       </main>
@@ -238,7 +257,6 @@ function PRDetailLoadingView() {
   return (
     <div className="min-h-screen bg-[#f0f4ff]">
       <Navbar backHref="/" />
-
       <main className="mx-auto max-w-5xl space-y-5 px-6 py-5">
         <div className="animate-pulse rounded-xl border border-blue-100 bg-white p-6 shadow-sm">
           <div className="mb-4 flex gap-3">
@@ -247,7 +265,6 @@ function PRDetailLoadingView() {
           </div>
           <div className="h-7 w-3/4 rounded bg-blue-100" />
         </div>
-
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {Array.from({ length: 5 }).map((_, index) => (
             <div
@@ -259,7 +276,6 @@ function PRDetailLoadingView() {
             </div>
           ))}
         </div>
-
         <div className="rounded-xl border border-blue-100 bg-white p-5 text-center text-sm text-blue-500 shadow-sm">
           <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" />
           Loading PR data

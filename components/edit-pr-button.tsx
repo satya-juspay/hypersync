@@ -2,18 +2,20 @@
 
 import { useState } from "react";
 import { Pencil, X, Save, ThumbsUp, ThumbsDown, Trash2, Loader2 } from "lucide-react";
-import {
-  invalidateSyncResponseCache,
-  syncAndLoad,
-} from "@/lib/hypersync-store";
 
 type Props = {
   prId: string;
   currentMainPrId: string | null;
   currentUpdatedStatus: string | null;
+  onUpdated?: () => void | Promise<void>;
 };
 
-export function EditPRButton({ prId, currentMainPrId, currentUpdatedStatus }: Props) {
+export function EditPRButton({
+  prId,
+  currentMainPrId,
+  currentUpdatedStatus,
+  onUpdated,
+}: Props) {
   const [open, setOpen] = useState(false);
   const [mainPrId, setMainPrId] = useState(currentMainPrId ?? "");
   const [saving, setSaving] = useState(false);
@@ -30,8 +32,7 @@ export function EditPRButton({ prId, currentMainPrId, currentUpdatedStatus }: Pr
       });
       const json = (await res.json()) as { success: boolean; error?: string };
       if (!res.ok || !json.success) throw new Error(json.error ?? "Failed to save");
-      invalidateSyncResponseCache();
-      await syncAndLoad({ quick: true, force: true });
+      await onUpdated?.();
       setOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -61,7 +62,10 @@ export function EditPRButton({ prId, currentMainPrId, currentUpdatedStatus }: Pr
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setMainPrId(currentMainPrId ?? "");
+          setOpen(true);
+        }}
         className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50"
       >
         <Pencil className="h-3.5 w-3.5" />

@@ -1,289 +1,180 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
-  DEFAULT_REPO,
-  fetchReleasePullRequests,
-  fetchPullRequests,
-  fetchPullRequestPatchFingerprint,
-  extractMainPrId,
-} from "@/lib/bitbucket";
+  releasePrPublicSelect,
+  toReleasePrView,
+  type ReleasePrPublicRecord,
+} from "@/lib/release-pr-view";
+import type { ReleasePR, ReleasePRStatus } from "@/types/hypersync";
 
 export const dynamic = "force-dynamic";
 
-const START_OF_MARCH_2026 = new Date("2026-03-01T00:00:00.000Z");
+const PAGE_SIZES = new Set([10, 50, 100]);
+const STATUSES = new Set<ReleasePRStatus>([
+  "MERGED",
+  "OPEN",
+  "DECLINED",
+  "INVALID",
+  "APPROVED",
+  "MISSING",
+]);
+const SORT_FIELDS = new Set([
+  "mergedAt",
+  "updatedAt",
+  "author",
+  "releaseBranch",
+  "title",
+]);
 
-export async function POST(request: Request) {
-  const body = await request.json().catch(() => ({})) as { quick?: boolean };
+type SortField = "mergedAt" | "updatedAt" | "author" | "releaseBranch" | "title";
+type SortDirection = "asc" | "desc";
 
-  // Quick mode — just return whatever is currently in the DB
-  if (body.quick) {
-    const [releasePRs, mainPRs, syncStatus] = await Promise.all([
-      prisma.releasePR.findMany(),
-      prisma.mainPR.findMany(),
-      prisma.syncStatus.findUnique({ where: { id: "singleton" } }),
-    ]);
-    return NextResponse.json({
-      success: true,
-      syncStatus: {
-        isRunning: syncStatus?.isRunning ?? false,
-        lastSynced: syncStatus?.lastSynced?.toISOString() ?? null,
-      },
-      releasePRsCount: releasePRs.length,
-      mainPRsCount: mainPRs.length,
-      releasePRs,
-      mainPRs,
-    });
-  }
+export async function GET(request: NextRequest) {
+  const params = request.nextUrl.searchParams;
+  const requestedPage = positiveInteger(params.get("page"), 1);
+  const requestedPageSize = positiveInteger(params.get("pageSize"), 10);
+  const pageSize = PAGE_SIZES.has(requestedPageSize) ? requestedPageSize : 10;
+  const query = params.get("q")?.trim().toLowerCase() ?? "";
+  const requestedStatus = params.get("status")?.toUpperCase() ?? "ALL";
+  const status = STATUSES.has(requestedStatus as ReleasePRStatus)
+    ? (requestedStatus as ReleasePRStatus)
+    : null;
+  const requestedSort = params.get("sortBy") ?? "mergedAt";
+  const sortBy = SORT_FIELDS.has(requestedSort)
+    ? (requestedSort as SortField)
+    : "mergedAt";
+  const sortDirection: SortDirection =
+    params.get("sortDirection") === "asc" ? "asc" : "desc";
 
-  console.log("[sync] Starting sync");
-
-  const syncStatus = await prisma.syncStatus.upsert({
-    where: { id: "singleton" },
-    create: { id: "singleton", isRunning: false, lastSynced: null },
-    update: {},
-  });
-
-  if (syncStatus.isRunning) {
-    console.log("[sync] Already in progress — aborting");
-    return NextResponse.json(
-      { success: false, error: "Sync already in progress" },
-      { status: 409 }
-    );
-  }
-
-  await prisma.syncStatus.update({
-    where: { id: "singleton" },
-    data: { isRunning: true },
-  });
-
-  const mergedAfter = syncStatus.lastSynced ?? START_OF_MARCH_2026;
-  const mainPrUpdatedAfter = START_OF_MARCH_2026;
-  const repo = DEFAULT_REPO;
-
-  console.log(
-    `[sync] Fetching release PRs merged after ${mergedAfter.toISOString()} and main PRs updated after ${mainPrUpdatedAfter.toISOString()} from repo "${repo}"`
+  const [releaseRecords, mainRecords, syncStatus] = await Promise.all([
+    prisma.releasePR.findMany({ select: releasePrPublicSelect }),
+    prisma.mainPR.findMany({ select: { id: true, status: true } }),
+    prisma.syncStatus.findUnique({ where: { id: "singleton" } }),
+  ]);
+  const mainStatusById = new Map(
+    mainRecords.map((mainPR) => [mainPR.id, mainPR.status])
+  );
+  const allReleasePRs = releaseRecords.map((releasePR) =>
+    toReleasePrView(
+      releasePR as ReleasePrPublicRecord,
+      releasePR.mainPrId
+        ? mainStatusById.get(releasePR.mainPrId)
+        : undefined
+    )
   );
 
-  try {
-    const [releasePRsBitbucket, allPRsBitbucket] = await Promise.all([
-      fetchReleasePullRequests(repo, { mergedAfter }),
-      fetchPullRequests(repo, { state: "ALL", maxPages: 20 }),
-    ]);
+  const summary = summarize(allReleasePRs);
+  const { leaderboard, branchLeaderboard } = buildLeaderboards(allReleasePRs);
+  const filtered = allReleasePRs
+    .filter((releasePR) => matchesQuery(releasePR, query))
+    .filter((releasePR) => !status || releasePR.syncStatus === status)
+    .sort((left, right) => compareReleasePRs(left, right, sortBy, sortDirection));
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const page = Math.min(requestedPage, totalPages);
+  const start = (page - 1) * pageSize;
+  const data = filtered.slice(start, start + pageSize);
 
-    const mainBranches = new Set(["main", "master"]);
-    const mainPrUpdatedAfterTime = mainPrUpdatedAfter.getTime();
-    const mainPRsBitbucket = allPRsBitbucket.filter((pr) => {
-      const branch = pr.toRef?.displayId?.toLowerCase() ?? "";
-      if (!mainBranches.has(branch)) return false;
-      const updatedAt = Number(pr.updatedDate ?? pr.createdDate);
-      return !Number.isNaN(updatedAt) && updatedAt >= mainPrUpdatedAfterTime;
-    });
-
-    console.log(`[sync] Fetched ${releasePRsBitbucket.length} release PRs, ${mainPRsBitbucket.length} main PRs`);
-
-    const [releasePatchFingerprints, mainPatchFingerprints] = await Promise.all([
-      fetchPatchFingerprintMap(repo, releasePRsBitbucket.map((pr) => pr.id)),
-      fetchPatchFingerprintMap(repo, mainPRsBitbucket.map((pr) => pr.id)),
-    ]);
-
-    console.log(`[sync] Upserting ${releasePRsBitbucket.length} release PRs into DB`);
-
-    for (const pr of releasePRsBitbucket) {
-      const id = String(pr.id);
-      const mainPrId = extractMainPrId(pr.description ?? "");
-      const author = pr.author?.user?.emailAddress ?? pr.author?.user?.email ?? "";
-      const displayName = pr.author?.user?.displayName ?? pr.author?.user?.name ?? "Unknown author";
-      const mergedAt = pr.state === "MERGED" ? (pr.closedDate ?? pr.updatedDate) : null;
-      const patchFingerprint = releasePatchFingerprints.get(id) ?? null;
-
-      const existing = await prisma.releasePR.findUnique({ where: { id } });
-
-      if (!existing) {
-        await prisma.releasePR.create({
-          data: {
-            id,
-            title: pr.title ?? `PR #${id}`,
-            author,
-            displayName,
-            releaseBranch: pr.toRef?.displayId ?? "",
-            mainPrId,
-            patchFingerprint,
-            mergedAt: mergedAt ? new Date(Number(mergedAt)) : null,
-          },
-        });
-        console.log(`[sync] Created release PR #${id} (mainPrId=${mainPrId ?? "none"})`);
-      } else if (existing.updatedStatus === null) {
-        await prisma.releasePR.update({
-          where: { id },
-          data: {
-            title: pr.title ?? `PR #${id}`,
-            author,
-            displayName,
-            mainPrId,
-            ...(patchFingerprint !== null && { patchFingerprint }),
-            mergedAt: mergedAt ? new Date(Number(mergedAt)) : null,
-          },
-        });
-        console.log(`[sync] Updated release PR #${id} (mainPrId=${mainPrId ?? "none"})`);
-      } else {
-        // updatedStatus is set — preserve user edits but still fix author/displayName
-        await prisma.releasePR.update({
-          where: { id },
-          data: {
-            author,
-            displayName,
-            ...(patchFingerprint !== null && { patchFingerprint }),
-          },
-        });
-        console.log(`[sync] Updated author/displayName for PR #${id} (updatedStatus preserved)`);
-      }
-    }
-
-    console.log(`[sync] Upserting ${mainPRsBitbucket.length} main PRs into DB`);
-
-    for (const pr of mainPRsBitbucket) {
-      const id = String(pr.id);
-      const author = pr.author?.user?.emailAddress ?? pr.author?.user?.email ?? "";
-      const displayName = pr.author?.user?.displayName ?? pr.author?.user?.name ?? "Unknown author";
-      const mergedAt = pr.state === "MERGED" ? (pr.closedDate ?? pr.updatedDate) : null;
-      const status = pr.state ?? "MERGED";
-      const patchFingerprint = mainPatchFingerprints.get(id) ?? null;
-      await prisma.mainPR.upsert({
-        where: { id },
-        create: {
-          id,
-          title: pr.title ?? `PR #${id}`,
-          author,
-          displayName,
-          status,
-          patchFingerprint,
-          mergedAt: mergedAt ? new Date(Number(mergedAt)) : null,
-        },
-        update: {
-          title: pr.title ?? `PR #${id}`,
-          author,
-          displayName,
-          status,
-          ...(patchFingerprint !== null && { patchFingerprint }),
-          mergedAt: mergedAt ? new Date(Number(mergedAt)) : null,
-        },
-      });
-      console.log(`[sync] Upserted main PR #${id} (${status})`);
-    }
-
-    const lastSynced = new Date();
-
-    await backfillMissingPatchFingerprints(repo);
-
-    await prisma.syncStatus.update({
-      where: { id: "singleton" },
-      data: { isRunning: false, lastSynced },
-    });
-
-    const [releasePRs, mainPRs] = await Promise.all([
-      prisma.releasePR.findMany(),
-      prisma.mainPR.findMany(),
-    ]);
-
-    console.log(`[sync] Completed — ${releasePRsBitbucket.length} release PRs, ${mainPRsBitbucket.length} main PRs. lastSynced=${lastSynced.toISOString()}`);
-
-    return NextResponse.json({
-      success: true,
-      syncStatus: { isRunning: false, lastSynced: lastSynced.toISOString() },
-      releasePRsCount: releasePRs.length,
-      mainPRsCount: mainPRs.length,
-      releasePRs,
-      mainPRs,
-    });
-  } catch (error) {
-    console.error("[sync] Sync failed:", error instanceof Error ? error.message : error);
-
-    await prisma.syncStatus.update({
-      where: { id: "singleton" },
-      data: { isRunning: false },
-    });
-
-    const message = error instanceof Error ? error.message : "Sync failed";
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
-  }
+  return NextResponse.json({
+    success: true,
+    data,
+    pagination: {
+      page,
+      pageSize,
+      total: filtered.length,
+      totalPages,
+    },
+    summary,
+    leaderboard,
+    branchLeaderboard,
+    syncStatus: {
+      isRunning: syncStatus?.isRunning ?? false,
+      lastSynced: syncStatus?.lastSynced?.toISOString() ?? null,
+    },
+  });
 }
 
-async function fetchPatchFingerprintMap(
-  repo: string,
-  ids: Array<string | number>
+function positiveInteger(value: string | null, fallback: number) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function matchesQuery(releasePR: ReleasePR, query: string) {
+  if (!query) return true;
+
+  return [
+    releasePR.id,
+    releasePR.title,
+    releasePR.author,
+    releasePR.displayName,
+    releasePR.releaseBranch,
+    releasePR.mainPrId,
+  ].some((value) => value?.toLowerCase().includes(query));
+}
+
+function summarize(releasePRs: ReleasePR[]) {
+  let merged = 0;
+  let approved = 0;
+
+  for (const releasePR of releasePRs) {
+    if (releasePR.syncStatus === "MERGED") merged += 1;
+    if (releasePR.syncStatus === "APPROVED") approved += 1;
+  }
+
+  return {
+    total: releasePRs.length,
+    merged,
+    approved,
+    unsynced: releasePRs.length - merged - approved,
+  };
+}
+
+function buildLeaderboards(releasePRs: ReleasePR[]) {
+  const authors = new Map<string, number>();
+  const branches = new Map<string, number>();
+
+  for (const releasePR of releasePRs) {
+    if (
+      releasePR.syncStatus === "MERGED" ||
+      releasePR.syncStatus === "APPROVED"
+    ) {
+      continue;
+    }
+
+    authors.set(releasePR.author, (authors.get(releasePR.author) ?? 0) + 1);
+    branches.set(
+      releasePR.releaseBranch,
+      (branches.get(releasePR.releaseBranch) ?? 0) + 1
+    );
+  }
+
+  return {
+    leaderboard: [...authors.entries()].sort((a, b) => b[1] - a[1]),
+    branchLeaderboard: [...branches.entries()].sort((a, b) => b[1] - a[1]),
+  };
+}
+
+function compareReleasePRs(
+  left: ReleasePR,
+  right: ReleasePR,
+  sortBy: SortField,
+  sortDirection: SortDirection
 ) {
-  const fingerprints = new Map<string, string | null>();
-  const uniqueIds = Array.from(new Set(ids.map((id) => String(id))));
-  const concurrency = 5;
+  const direction = sortDirection === "asc" ? 1 : -1;
+  const leftValue = sortValue(left, sortBy);
+  const rightValue = sortValue(right, sortBy);
 
-  for (let start = 0; start < uniqueIds.length; start += concurrency) {
-    const batch = uniqueIds.slice(start, start + concurrency);
-    const entries = await Promise.all(
-      batch.map(async (id) => [
-        id,
-        await safeFetchPatchFingerprint(repo, id),
-      ] as const)
-    );
-
-    for (const [id, fingerprint] of entries) {
-      fingerprints.set(id, fingerprint);
-    }
-  }
-
-  return fingerprints;
+  return (
+    leftValue.localeCompare(rightValue, undefined, {
+      numeric: true,
+      sensitivity: "base",
+    }) * direction
+  );
 }
 
-async function safeFetchPatchFingerprint(repo: string, prId: string | number) {
-  try {
-    return await fetchPullRequestPatchFingerprint(repo, prId);
-  } catch (error) {
-    console.warn(
-      `[sync] Failed to fetch patch fingerprint for PR #${prId}:`,
-      error instanceof Error ? error.message : error
-    );
-    return null;
-  }
-}
-
-async function backfillMissingPatchFingerprints(repo: string) {
-  const [releasePRs, mainPRs] = await Promise.all([
-    prisma.releasePR.findMany({
-      where: { patchFingerprint: null },
-      select: { id: true },
-    }),
-    prisma.mainPR.findMany({
-      where: { patchFingerprint: null },
-      select: { id: true },
-    }),
-  ]);
-
-  const [releaseFingerprints, mainFingerprints] = await Promise.all([
-    fetchPatchFingerprintMap(repo, releasePRs.map((pr) => pr.id)),
-    fetchPatchFingerprintMap(repo, mainPRs.map((pr) => pr.id)),
-  ]);
-
-  await Promise.all([
-    ...releasePRs.map((pr) => {
-      const patchFingerprint = releaseFingerprints.get(pr.id);
-      if (patchFingerprint === null || patchFingerprint === undefined) {
-        return Promise.resolve();
-      }
-
-      return prisma.releasePR.update({
-        where: { id: pr.id },
-        data: { patchFingerprint },
-      });
-    }),
-    ...mainPRs.map((pr) => {
-      const patchFingerprint = mainFingerprints.get(pr.id);
-      if (patchFingerprint === null || patchFingerprint === undefined) {
-        return Promise.resolve();
-      }
-
-      return prisma.mainPR.update({
-        where: { id: pr.id },
-        data: { patchFingerprint },
-      });
-    }),
-  ]);
+function sortValue(releasePR: ReleasePR, sortBy: SortField) {
+  if (sortBy === "mergedAt") return releasePR.mergedAt ?? "";
+  if (sortBy === "updatedAt") return releasePR.updatedAt ?? "";
+  if (sortBy === "releaseBranch") return releasePR.releaseBranch;
+  if (sortBy === "title") return releasePR.title;
+  return releasePR.displayName || releasePR.author;
 }

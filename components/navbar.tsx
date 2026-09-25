@@ -3,22 +3,18 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { RefreshCw, ArrowLeft, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ShieldCheck } from "lucide-react";
 import { SignInButton, UserButton, useAuth } from "@clerk/nextjs";
 
 const adminAccessCache = new Map<string, boolean>();
 
 interface NavbarProps {
   backHref?: string;
-  onRefresh?: () => void;
-  refreshing?: boolean;
   lastSyncedAt?: string | null;
 }
 
 export function Navbar({
   backHref,
-  onRefresh,
-  refreshing,
   lastSyncedAt,
 }: NavbarProps) {
   const { isSignedIn, isLoaded, userId } = useAuth();
@@ -36,22 +32,16 @@ export function Navbar({
               <ArrowLeft className="h-4 w-4" />
             </Link>
           )}
-          <Link href="/" className="flex items-center gap-2">
+          <Link href="/" aria-label="hyperSync home">
             <Image
-              src="/logo.png"
-              alt="HyperSync logo"
-              width={64}
-              height={43}
-              className="h-8 w-auto"
+              src="/hypersync-wordmark.png"
+              alt="hyperSync"
+              width={168}
+              height={40}
+              className="h-9 w-auto"
               priority
             />
-            <span className="text-lg font-bold tracking-tight text-blue-900">
-              hyperSync
-            </span>
           </Link>
-          <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-white">
-            Beta
-          </span>
         </div>
 
         <div className="flex items-center gap-3">
@@ -62,17 +52,6 @@ export function Navbar({
             Last sync:{" "}
             <span className="text-blue-800">{formatLastSyncedAt(lastSyncedAt)}</span>
           </span>
-          {onRefresh && (
-            <button
-              onClick={onRefresh}
-              disabled={refreshing}
-              title="Refresh data"
-              className="rounded-lg border border-blue-100 bg-white p-1.5 text-blue-400 shadow-sm transition hover:bg-blue-50 hover:text-blue-600 disabled:opacity-50"
-            >
-              <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-            </button>
-          )}
-
           {isLoaded && (
             isSignedIn ? (
               <UserButton />

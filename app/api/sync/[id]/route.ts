@@ -1,8 +1,53 @@
 import { NextRequest, NextResponse } from "next/server";
 import { canEditReleasePR, getCurrentUserEmail } from "@/lib/authz";
 import { prisma } from "@/lib/prisma";
+import {
+  releasePrPublicSelect,
+  toReleasePrView,
+  type ReleasePrPublicRecord,
+} from "@/lib/release-pr-view";
 
 export const dynamic = "force-dynamic";
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const [releasePR, syncStatus] = await Promise.all([
+    prisma.releasePR.findUnique({
+      where: { id },
+      select: releasePrPublicSelect,
+    }),
+    prisma.syncStatus.findUnique({ where: { id: "singleton" } }),
+  ]);
+
+  if (!releasePR) {
+    return NextResponse.json(
+      { success: false, error: `Release PR #${id} not found` },
+      { status: 404 }
+    );
+  }
+
+  const mainPR = releasePR.mainPrId
+    ? await prisma.mainPR.findUnique({
+        where: { id: releasePR.mainPrId },
+        select: { status: true },
+      })
+    : null;
+
+  return NextResponse.json({
+    success: true,
+    data: toReleasePrView(
+      releasePR as ReleasePrPublicRecord,
+      mainPR?.status
+    ),
+    syncStatus: {
+      isRunning: syncStatus?.isRunning ?? false,
+      lastSynced: syncStatus?.lastSynced?.toISOString() ?? null,
+    },
+  });
+}
 
 export async function PATCH(
   request: NextRequest,
@@ -76,7 +121,17 @@ export async function PATCH(
       updatedBy: userEmail,
       updatedAt: new Date(),
     },
+    select: releasePrPublicSelect,
   });
+  const mainPR = updated.mainPrId
+    ? await prisma.mainPR.findUnique({
+        where: { id: updated.mainPrId },
+        select: { status: true },
+      })
+    : null;
 
-  return NextResponse.json({ success: true, data: updated });
+  return NextResponse.json({
+    success: true,
+    data: toReleasePrView(updated as ReleasePrPublicRecord, mainPR?.status),
+  });
 }

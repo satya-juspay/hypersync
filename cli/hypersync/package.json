@@ -1,0 +1,13 @@
+{
+  "name": "hypersync-office-cli",
+  "version": "0.1.0",
+  "description": "Office-network Bitbucket importer for HyperSync",
+  "type": "module",
+  "bin": {
+    "hypersync": "bin/hypersync.mjs"
+  },
+  "files": ["bin", "src", "README.md"],
+  "scripts": { "test": "node --test" },
+  "engines": { "node": ">=20.12" },
+  "license": "UNLICENSED"
+}

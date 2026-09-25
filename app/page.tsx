@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   RefreshCw,
@@ -26,11 +26,9 @@ import {
 } from "@/lib/hypersync-store";
 import type {
   DashboardPageSize,
-  DashboardSortDirection,
   DashboardSortOption,
   DashboardStatusFilter,
 } from "@/lib/hypersync-store";
-import type { ReleasePR } from "@/types/hypersync";
 
 const REPO = "hyper-widget";
 const PAGE_SIZES = [10, 50, 100] as const;
@@ -44,24 +42,27 @@ const STATUS_FILTERS = [
   { value: "MISSING", label: "Missing" },
 ] satisfies Array<{ value: StatusFilter; label: string }>;
 const SORT_OPTIONS = [
-  { value: "createdBy", label: "Created By" },
-  { value: "mergedBy", label: "Merged By" },
-  { value: "mainPrMergedBy", label: "Main PR Merged By" },
-  { value: "releasePrMergedBy", label: "Release PR Merged By" },
+  { value: "mergedAt", label: "Merged At" },
+  { value: "updatedAt", label: "Updated At" },
+  { value: "author", label: "Author" },
+  { value: "releaseBranch", label: "Release Branch" },
+  { value: "title", label: "Title" },
 ] satisfies Array<{ value: SortOption; label: string }>;
 
 type StatusFilter = DashboardStatusFilter;
 type SortOption = DashboardSortOption;
-type SortDirection = DashboardSortDirection;
 
 export default function Home() {
   const router = useRouter();
   const {
     releasePRs: data,
     syncStatus,
+    summary,
+    leaderboard,
+    branchLeaderboard,
+    pagination,
     dashboardView,
     loading,
-    refreshing,
     initialized,
     error,
   } = useHyperSyncStore();
@@ -76,92 +77,23 @@ export default function Home() {
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   useEffect(() => {
-    let syncHandled = false;
-    let disposed = false;
-
-    void syncAndLoad({ quick: true }).then((started) => {
-      syncHandled = started;
-    });
-
-    const fallbackTimer = window.setTimeout(() => {
-      if (!disposed && !syncHandled) {
-        void syncAndLoad({ quick: true, force: true });
-      }
-    }, 1000);
+    const timer = window.setTimeout(
+      () => void syncAndLoad({ force: true }),
+      query ? 250 : 0
+    );
 
     return () => {
-      disposed = true;
-      window.clearTimeout(fallbackTimer);
+      window.clearTimeout(timer);
     };
-  }, []);
+  }, [currentPage, pageSize, query, sortBy, sortDirection, statusFilter]);
 
-  const { total, unsynced, merged, approved } = useMemo(() => {
-    let unsyncedCount = 0;
-    let mergedCount = 0;
-    let approvedCount = 0;
-
-    for (const pr of data) {
-      if (pr.syncStatus === "MERGED") mergedCount += 1;
-      if (pr.syncStatus === "APPROVED") approvedCount += 1;
-      if (pr.syncStatus !== "MERGED" && pr.syncStatus !== "APPROVED") {
-        unsyncedCount += 1;
-      }
-    }
-
-    return {
-      total: data.length,
-      unsynced: unsyncedCount,
-      merged: mergedCount,
-      approved: approvedCount,
-    };
-  }, [data]);
-
-  const { leaderboard, branchLeaderboard } = useMemo(() => {
-    const riskMap: Record<string, number> = {};
-    const branchRiskMap: Record<string, number> = {};
-
-    for (const pr of data) {
-      if (pr.syncStatus === "MERGED" || pr.syncStatus === "APPROVED") {
-        continue;
-      }
-
-      riskMap[pr.author] = (riskMap[pr.author] || 0) + 1;
-      branchRiskMap[pr.releaseBranch] =
-        (branchRiskMap[pr.releaseBranch] || 0) + 1;
-    }
-
-    return {
-      leaderboard: Object.entries(riskMap).sort((a, b) => b[1] - a[1]),
-      branchLeaderboard: Object.entries(branchRiskMap).sort(
-        (a, b) => b[1] - a[1]
-      ),
-    };
-  }, [data]);
-
-  const filtered = useMemo(() => {
-    const q = query.toLowerCase();
-
-    return data
-      .filter((p) => {
-        const matchesSearch =
-          p.id.includes(q) ||
-          p.title.toLowerCase().includes(q) ||
-          p.author.toLowerCase().includes(q) ||
-          p.releaseBranch.toLowerCase().includes(q);
-        const matchesStatus =
-          statusFilter === "ALL" || p.syncStatus === statusFilter;
-
-        return matchesSearch && matchesStatus;
-      })
-      .sort((a, b) => compareReleasePRs(a, b, sortBy, sortDirection));
-  }, [data, query, sortBy, sortDirection, statusFilter]);
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const activePage = Math.min(currentPage, totalPages);
+  const { total, unsynced, merged, approved } = summary;
+  const totalPages = pagination.totalPages;
+  const activePage = pagination.page;
   const pageStartIndex = (activePage - 1) * pageSize;
   const pageEndIndex = pageStartIndex + pageSize;
-  const paginated = filtered.slice(pageStartIndex, pageEndIndex);
-  const pageStart = filtered.length === 0 ? 0 : pageStartIndex + 1;
-  const pageEnd = Math.min(pageEndIndex, filtered.length);
+  const pageStart = pagination.total === 0 ? 0 : pageStartIndex + 1;
+  const pageEnd = Math.min(pageEndIndex, pagination.total);
   const initialLoading = !initialized && data.length === 0 && !error;
 
   const rankColors = [
@@ -174,11 +106,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-[#f0f4ff]">
-      <Navbar
-        onRefresh={() => void syncAndLoad()}
-        refreshing={refreshing}
-        lastSyncedAt={syncStatus.lastSyncedAt}
-      />
+      <Navbar lastSyncedAt={syncStatus.lastSyncedAt} />
 
       <main className="mx-auto max-w-7xl px-6 py-4 space-y-4">
         {error && (
@@ -444,7 +372,7 @@ export default function Home() {
             {!loading && (
               <p className="text-xs text-blue-400">
                 Showing <strong className="text-blue-700">{pageStart}-{pageEnd}</strong>{" "}
-                of <strong className="text-blue-700">{filtered.length}</strong> PRs
+                of <strong className="text-blue-700">{pagination.total}</strong> PRs
               </p>
             )}
           </div>
@@ -472,7 +400,7 @@ export default function Home() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-blue-50">
-                {filtered.length === 0 ? (
+                {data.length === 0 ? (
                   <tr>
                     <td
                       colSpan={7}
@@ -482,7 +410,7 @@ export default function Home() {
                     </td>
                   </tr>
                 ) : (
-                  paginated.map((pr) => (
+                  data.map((pr) => (
                     <tr
                       key={pr.id}
                       onMouseEnter={() => router.prefetch(`/pr/${pr.id}`)}
@@ -543,7 +471,7 @@ export default function Home() {
             </table>
             </div>
           )}
-          {!loading && filtered.length > 0 && (
+          {!loading && pagination.total > 0 && (
             <div className="flex items-center justify-between border-t border-blue-50 bg-blue-50/40 px-4 py-3">
               <p className="text-xs font-medium text-blue-500">
                 Page <span className="text-blue-800">{activePage}</span> of{" "}
@@ -632,45 +560,4 @@ function InitialSyncLoading() {
       </div>
     </div>
   );
-}
-
-function compareReleasePRs(
-  a: ReleasePR,
-  b: ReleasePR,
-  sortBy: SortOption,
-  sortDirection: SortDirection
-) {
-  const aValue = sortValue(a, sortBy);
-  const bValue = sortValue(b, sortBy);
-
-  if (!aValue && bValue) return 1;
-  if (aValue && !bValue) return -1;
-
-  const byText = aValue.localeCompare(bValue, undefined, {
-    sensitivity: "base",
-  });
-  if (byText !== 0) return sortDirection === "asc" ? byText : -byText;
-
-  const aTime = Date.parse(a.mergedAt ?? a.updatedAt ?? "");
-  const bTime = Date.parse(b.mergedAt ?? b.updatedAt ?? "");
-  const byDate =
-    (Number.isNaN(aTime) ? 0 : aTime) - (Number.isNaN(bTime) ? 0 : bTime);
-
-  return sortDirection === "asc" ? byDate : -byDate;
-}
-
-function sortValue(pr: ReleasePR, sortBy: SortOption) {
-  if (sortBy === "createdBy") {
-    return pr.createdBy ?? pr.author;
-  }
-
-  if (sortBy === "mainPrMergedBy") {
-    return pr.mainPrMergedBy ?? "";
-  }
-
-  if (sortBy === "releasePrMergedBy") {
-    return pr.releasePrMergedBy ?? pr.mergedBy ?? "";
-  }
-
-  return pr.mergedBy ?? pr.releasePrMergedBy ?? pr.mainPrMergedBy ?? "";
 }

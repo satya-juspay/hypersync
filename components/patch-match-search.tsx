@@ -2,23 +2,13 @@
 
 import { useState } from "react";
 import { ExternalLink, Loader2, Search, Target } from "lucide-react";
-import {
-  getHyperSyncStoreSnapshot,
-  invalidateSyncResponseCache,
-  syncAndLoad,
-  useHyperSyncStore,
-} from "@/lib/hypersync-store";
-import {
-  findPatchMatchesFromFingerprints,
-  type PatchScore,
-} from "@/lib/patch-score";
+import type { PatchScore } from "@/lib/patch-score";
 
 type PatchMatch = PatchScore & {
-  mainPrId: string;
   title: string;
   author: string;
-  displayName: string | undefined;
-  status: string | undefined;
+  displayName: string;
+  status: string;
   mergedAt: string | null;
   bitbucketUrl: string;
 };
@@ -26,16 +16,24 @@ type PatchMatch = PatchScore & {
 type Props = {
   releasePrId: string;
   currentMainPrId: string | null;
-  releasePatchFingerprint: string | null;
+  onUpdated?: () => void | Promise<void>;
+};
+
+type MatchesResponse = {
+  success: boolean;
+  ticketNumber?: string;
+  searched?: number;
+  matches?: PatchMatch[];
+  error?: string;
 };
 
 export function PatchMatchSearch({
   releasePrId,
   currentMainPrId,
-  releasePatchFingerprint,
+  onUpdated,
 }: Props) {
-  useHyperSyncStore();
   const [matches, setMatches] = useState<PatchMatch[] | null>(null);
+  const [ticketNumber, setTicketNumber] = useState<string | null>(null);
   const [searched, setSearched] = useState(0);
   const [loading, setLoading] = useState(false);
   const [savingMainPrId, setSavingMainPrId] = useState<string | null>(null);
@@ -46,63 +44,18 @@ export function PatchMatchSearch({
     setError(null);
 
     try {
-      let snapshot = getHyperSyncStoreSnapshot();
+      const response = await fetch(`/api/sync/${releasePrId}/matches`, {
+        cache: "no-store",
+      });
+      const json = (await response.json()) as MatchesResponse;
 
-      if (!snapshot.initialized || snapshot.mainPRs.length === 0) {
-        await syncAndLoad({ quick: true });
-        snapshot = getHyperSyncStoreSnapshot();
+      if (!response.ok || !json.success) {
+        throw new Error(json.error ?? "Failed to search patch matches");
       }
 
-      const releasePR = snapshot.releasePRs.find(
-        (pr) => pr.id === releasePrId
-      );
-      const fingerprint =
-        releasePR?.patchFingerprint ?? releasePatchFingerprint ?? null;
-
-      if (!fingerprint) {
-        throw new Error(
-          "Patch fingerprint is not available for this release PR"
-        );
-      }
-
-      const mainPRCandidates = snapshot.mainPRs.filter(
-        (pr) => pr.patchFingerprint
-      );
-
-      if (mainPRCandidates.length === 0) {
-        throw new Error(
-          "Main PR patch fingerprints are not available"
-        );
-      }
-
-      const scores = findPatchMatchesFromFingerprints(
-        fingerprint,
-        mainPRCandidates.map((pr) => ({
-          mainPrId: pr.id,
-          patchFingerprint: pr.patchFingerprint,
-        })),
-        { minScore: 0.6 }
-      );
-      const mainPRById = new Map(snapshot.mainPRs.map((pr) => [pr.id, pr]));
-      const nextMatches = scores
-        .map((score) => {
-          const mainPR = mainPRById.get(score.mainPrId);
-          if (!mainPR) return null;
-
-          return {
-            ...score,
-            title: mainPR.title,
-            author: mainPR.author,
-            displayName: mainPR.displayName,
-            status: mainPR.status,
-            mergedAt: mainPR.mergedAt ?? null,
-            bitbucketUrl: mainPR.bitbucketUrl,
-          };
-        })
-        .filter((match): match is PatchMatch => match !== null);
-
-      setMatches(nextMatches);
-      setSearched(mainPRCandidates.length);
+      setMatches(json.matches ?? []);
+      setTicketNumber(json.ticketNumber ?? null);
+      setSearched(json.searched ?? 0);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to search patch matches"
@@ -128,8 +81,7 @@ export function PatchMatchSearch({
         throw new Error(json.error ?? "Failed to update main PR");
       }
 
-      invalidateSyncResponseCache();
-      await syncAndLoad({ quick: true, force: true });
+      await onUpdated?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update main PR");
     } finally {
@@ -145,7 +97,7 @@ export function PatchMatchSearch({
             Patch Score Matches
           </h2>
           <p className="mt-1 text-xs text-blue-400">
-            Scores stored main PR patch fingerprints in the browser.
+            Scores main PRs with the same devqa ticket on the server.
           </p>
         </div>
         <button
@@ -175,10 +127,11 @@ export function PatchMatchSearch({
         </div>
       ) : matches.length === 0 ? (
         <div className="rounded-lg border border-blue-50 bg-blue-50/40 px-4 py-3 text-sm text-blue-500">
-          No main PRs scored above 60% across {searched} candidates.
+          No main PRs scored above 60% across {searched} candidates
+          {ticketNumber ? ` for ticket ${ticketNumber}` : ""}.
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-blue-100">
+        <div className="overflow-x-auto rounded-lg border border-blue-100">
           <table className="w-full min-w-[760px] text-sm">
             <thead>
               <tr className="border-b border-blue-100 bg-blue-50/60 text-left text-xs font-semibold uppercase tracking-wider text-blue-500">

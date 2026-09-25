@@ -1,0 +1,3 @@
+ALTER TABLE "SyncStatus" ADD COLUMN "runId" TEXT;
+ALTER TABLE "SyncStatus" ADD COLUMN "runStartedAt" TIMESTAMP(3);
+ALTER TABLE "SyncStatus" ADD COLUMN "leaseUntil" TIMESTAMP(3);

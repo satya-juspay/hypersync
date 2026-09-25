@@ -1,19 +1,15 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import type {
-  CachedPullRequest,
-  ReleasePR,
-  ReleasePRStatus,
-  SyncStatus,
-} from "@/types/hypersync";
+import type { ReleasePR, ReleasePRStatus, SyncStatus } from "@/types/hypersync";
 
 export type DashboardStatusFilter = "ALL" | ReleasePRStatus;
 export type DashboardSortOption =
-  | "createdBy"
-  | "mergedBy"
-  | "mainPrMergedBy"
-  | "releasePrMergedBy";
+  | "mergedAt"
+  | "updatedAt"
+  | "author"
+  | "releaseBranch"
+  | "title";
 export type DashboardSortDirection = "asc" | "desc";
 export type DashboardPageSize = 10 | 50 | 100;
 
@@ -26,10 +22,27 @@ export type DashboardViewState = {
   sortDirection: DashboardSortDirection;
 };
 
+type DashboardSummary = {
+  total: number;
+  unsynced: number;
+  merged: number;
+  approved: number;
+};
+
+type DashboardPagination = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
 type StoreState = {
   releasePRs: ReleasePR[];
-  mainPRs: CachedPullRequest[];
   syncStatus: SyncStatus;
+  summary: DashboardSummary;
+  leaderboard: Array<[string, number]>;
+  branchLeaderboard: Array<[string, number]>;
+  pagination: DashboardPagination;
   dashboardView: DashboardViewState;
   loading: boolean;
   refreshing: boolean;
@@ -42,20 +55,34 @@ const initialSyncStatus: SyncStatus = {
   processed: 0,
   total: 0,
 };
-
+const initialSummary: DashboardSummary = {
+  total: 0,
+  unsynced: 0,
+  merged: 0,
+  approved: 0,
+};
+const initialPagination: DashboardPagination = {
+  page: 1,
+  pageSize: 10,
+  total: 0,
+  totalPages: 1,
+};
 const initialDashboardView: DashboardViewState = {
   query: "",
   pageSize: 10,
   currentPage: 1,
   statusFilter: "ALL",
-  sortBy: "mergedBy",
-  sortDirection: "asc",
+  sortBy: "mergedAt",
+  sortDirection: "desc",
 };
 
 let state: StoreState = {
   releasePRs: [],
-  mainPRs: [],
   syncStatus: initialSyncStatus,
+  summary: initialSummary,
+  leaderboard: [],
+  branchLeaderboard: [],
+  pagination: initialPagination,
   dashboardView: initialDashboardView,
   loading: false,
   refreshing: false,
@@ -64,20 +91,14 @@ let state: StoreState = {
 };
 
 const listeners = new Set<() => void>();
-let syncRequestId = 0;
-let syncResponseCache: SyncApiResponse | null = null;
+let requestId = 0;
 
 function emit() {
-  for (const listener of listeners) {
-    listener();
-  }
+  for (const listener of listeners) listener();
 }
 
 function setState(nextState: Partial<StoreState>) {
-  state = {
-    ...state,
-    ...nextState,
-  };
+  state = { ...state, ...nextState };
   emit();
 }
 
@@ -92,14 +113,6 @@ function subscribe(listener: () => void) {
 
 export function useHyperSyncStore() {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-}
-
-export function getHyperSyncStoreSnapshot() {
-  return getSnapshot();
-}
-
-export function invalidateSyncResponseCache() {
-  syncResponseCache = null;
 }
 
 export function updateDashboardViewState(
@@ -118,122 +131,33 @@ export function updateDashboardViewState(
   });
 }
 
-type DbReleasePR = {
-  id: string;
-  title: string;
-  author: string;
-  displayName: string;
-  releaseBranch: string;
-  mainPrId: string | null;
-  patchFingerprint: string | null;
-  updatedStatus: string | null;
-  updatedBy: string | null;
-  updatedAt: string | null;
-  mergedAt: string | null;
-  createdAt: string;
-};
-
-type DbMainPR = {
-  id: string;
-  title: string;
-  author: string;
-  displayName: string;
-  status: string;
-  patchFingerprint: string | null;
-  mergedAt: string | null;
-  createdAt: string;
-};
-
 type SyncApiResponse = {
   success: boolean;
+  data?: ReleasePR[];
+  pagination?: DashboardPagination;
+  summary?: DashboardSummary;
+  leaderboard?: Array<[string, number]>;
+  branchLeaderboard?: Array<[string, number]>;
   syncStatus?: { isRunning: boolean; lastSynced: string | null };
-  releasePRs?: DbReleasePR[];
-  mainPRs?: DbMainPR[];
   error?: string;
 };
 
-function deriveReleasePRStatus(pr: DbReleasePR, mainPRs: DbMainPR[]): ReleasePR["syncStatus"] {
-  if (pr.updatedStatus === "APPROVED") return "APPROVED";
-  if (!pr.mainPrId) return "MISSING";
-  const mainPR = mainPRs.find((m) => m.id === pr.mainPrId);
-  if (!mainPR) return "INVALID";
-  if (mainPR.status === "MERGED") return "MERGED";
-  if (mainPR.status === "OPEN") return "OPEN";
-  if (mainPR.status === "DECLINED") return "DECLINED";
-  return "INVALID";
-}
-
-function buildPrUrl(repo: string, prId: string): string {
-  const base = (process.env.NEXT_PUBLIC_BITBUCKET_BASE_URL ?? "").replace(/\/+$/, "");
-  const project = process.env.NEXT_PUBLIC_BITBUCKET_PROJECT_KEY ?? "";
-  return `${base}/projects/${project}/repos/${repo}/pull-requests/${prId}/overview`;
-}
-
-const SYNC_REPO = "hyper-widget";
-
-function stateFromSyncResponse(json: SyncApiResponse) {
-  const dbMainPRs = json.mainPRs ?? [];
-  const dbReleasePRs = json.releasePRs ?? [];
-
-  const releasePRs: ReleasePR[] = dbReleasePRs.map((pr) => ({
-    id: pr.id,
-    title: pr.title,
-    author: pr.author,
-    releaseBranch: pr.releaseBranch,
-    mainPrId: pr.mainPrId ?? null,
-    patchFingerprint: pr.patchFingerprint ?? null,
-    updatedStatus: pr.updatedStatus ?? null,
-    syncStatus: deriveReleasePRStatus(pr, dbMainPRs),
-    mergedAt: pr.mergedAt ?? null,
-    updatedBy: pr.updatedBy ?? null,
-    updatedAt: pr.updatedAt ?? null,
-    bitbucketUrl: buildPrUrl(SYNC_REPO, pr.id),
-  }));
-
-  const mainPRs: CachedPullRequest[] = dbMainPRs.map((pr) => ({
-    id: pr.id,
-    title: pr.title,
-    author: pr.author,
-    displayName: pr.displayName,
-    status: pr.status,
-    targetBranch: "main",
-    patchFingerprint: pr.patchFingerprint ?? null,
-    mergedAt: pr.mergedAt ?? null,
-    bitbucketUrl: buildPrUrl(SYNC_REPO, pr.id),
-  }));
-
-  return {
-    releasePRs,
-    mainPRs,
-    syncStatus: {
-      inProgress: json.syncStatus?.isRunning ?? false,
-      processed: releasePRs.length,
-      total: releasePRs.length,
-      lastSyncedAt: json.syncStatus?.lastSynced ?? undefined,
-    },
-  };
-}
-
 export async function syncAndLoad(
-  options: { quick?: boolean; force?: boolean } = {}
+  options: { force?: boolean } = {}
 ): Promise<boolean> {
-  if (options.quick && syncResponseCache && !options.force) {
-    const cachedState = stateFromSyncResponse(syncResponseCache);
-
-    setState({
-      ...cachedState,
-      initialized: true,
-      loading: false,
-      refreshing: false,
-      error: null,
-    });
-
-    return true;
-  }
-
   if ((state.loading || state.refreshing) && !options.force) return false;
 
-  const requestId = ++syncRequestId;
+  const currentRequestId = ++requestId;
+  const view = state.dashboardView;
+  const params = new URLSearchParams({
+    page: String(view.currentPage),
+    pageSize: String(view.pageSize),
+    status: view.statusFilter,
+    sortBy: view.sortBy,
+    sortDirection: view.sortDirection,
+  });
+
+  if (view.query.trim()) params.set("q", view.query.trim());
 
   setState({
     loading: !state.initialized,
@@ -242,27 +166,33 @@ export async function syncAndLoad(
   });
 
   try {
-    const response = await fetch("/api/sync", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ quick: options.quick ?? false }),
+    const response = await fetch(`/api/sync?${params.toString()}`, {
+      method: "GET",
       cache: "no-store",
     });
     const json = await parseJson<SyncApiResponse>(response);
 
     if (!response.ok || !json.success) {
-      throw new Error(json.error ?? "Failed to sync");
+      throw new Error(json.error ?? "Failed to load PRs");
     }
 
-    if (requestId !== syncRequestId) {
-      return true;
-    }
+    if (currentRequestId !== requestId) return true;
 
-    syncResponseCache = json;
-    const nextState = stateFromSyncResponse(json);
+    const releasePRs = json.data ?? [];
+    const pagination = json.pagination ?? initialPagination;
 
     setState({
-      ...nextState,
+      releasePRs,
+      pagination,
+      summary: json.summary ?? initialSummary,
+      leaderboard: json.leaderboard ?? [],
+      branchLeaderboard: json.branchLeaderboard ?? [],
+      syncStatus: {
+        inProgress: json.syncStatus?.isRunning ?? false,
+        processed: releasePRs.length,
+        total: pagination.total,
+        lastSyncedAt: json.syncStatus?.lastSynced ?? undefined,
+      },
       initialized: true,
       loading: false,
       refreshing: false,
@@ -271,15 +201,13 @@ export async function syncAndLoad(
 
     return true;
   } catch (error) {
-    if (requestId !== syncRequestId) {
-      return true;
-    }
+    if (currentRequestId !== requestId) return true;
 
     setState({
       loading: false,
       refreshing: false,
       initialized: true,
-      error: error instanceof Error ? error.message : "Failed to sync",
+      error: error instanceof Error ? error.message : "Failed to load PRs",
     });
 
     return true;

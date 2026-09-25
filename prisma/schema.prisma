@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
 model ReleasePR {
@@ -12,6 +12,7 @@ model ReleasePR {
   author           String
   authorEmail      String?
   displayName      String
+  sourceBranch     String?
   releaseBranch    String
   mainPrId         String?
   patchFingerprint String?
@@ -20,6 +21,8 @@ model ReleasePR {
   updatedAt        DateTime?
   mergedAt         DateTime?
   createdAt        DateTime  @default(now())
+
+  @@index([sourceBranch])
 }
 
 model MainPR {
@@ -27,16 +30,22 @@ model MainPR {
   title            String
   author           String
   displayName      String
+  sourceBranch     String?
   status           String
   patchFingerprint String?
   mergedAt         DateTime?
   createdAt        DateTime  @default(now())
+
+  @@index([sourceBranch])
 }
 
 model SyncStatus {
   id         String    @id @default("singleton")
   isRunning  Boolean   @default(false)
   lastSynced DateTime?
+  runId      String?
+  runStartedAt DateTime?
+  leaseUntil DateTime?
 }
 
 model AdminUser {

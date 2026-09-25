@@ -6,9 +6,9 @@ import { defineConfig, env } from "prisma/config";
 export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
-    path: "prisma/migrations",
+    path: "prisma/migrations-postgresql",
   },
   datasource: {
-    url: env("DATABASE_URL"),
+      url: env("DIRECT_URL"),
   },
 });
