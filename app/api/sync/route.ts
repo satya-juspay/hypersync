@@ -140,7 +140,11 @@ function buildLeaderboards(releasePRs: ReleasePR[]) {
       continue;
     }
 
-    authors.set(releasePR.author, (authors.get(releasePR.author) ?? 0) + 1);
+    const contributor =
+      releasePR.author.trim() ||
+      releasePR.displayName?.trim() ||
+      "Unknown contributor";
+    authors.set(contributor, (authors.get(contributor) ?? 0) + 1);
     branches.set(
       releasePR.releaseBranch,
       (branches.get(releasePR.releaseBranch) ?? 0) + 1

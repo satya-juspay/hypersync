@@ -435,7 +435,9 @@ export default function Home() {
                       <td className="max-w-xs px-4 py-3 text-slate-800">
                         <span className="line-clamp-2">{pr.title}</span>
                       </td>
-                      <td className="px-4 py-3 text-blue-800">{pr.author}</td>
+                      <td className="px-4 py-3 text-blue-800">
+                        {pr.author || pr.displayName || "Unknown contributor"}
+                      </td>
                       <td className="px-4 py-3 font-mono text-xs text-blue-500">
                         {pr.releaseBranch}
                       </td>
