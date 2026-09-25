@@ -43,6 +43,17 @@ unchanged, and repeated uploads update the same PR IDs without duplicate rows.
 Only one importer can hold the database lease at a time. If the process dies,
 the lease expires after five minutes.
 
+To backfill patch fingerprints for every main PR already stored in the database,
+without scanning PR metadata or advancing the sync cursor, run:
+
+```bash
+node cli/hypersync/bin/hypersync.mjs backfill-main-fingerprints
+```
+
+Use `--limit N` to process only the next N missing main PR fingerprints. The
+command is resumable: rerunning it skips rows whose fingerprints are already
+stored.
+
 The unscoped npm name `hypersync` is already taken. The package name
 `hypersync-office-cli` was unregistered when this package was prepared; verify
 availability again before publishing. If your organization prefers a scope,

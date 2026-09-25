@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev --webpack",
     "build": "prisma generate && next build",
+    "backfill:main-fingerprints": "node cli/hypersync/bin/hypersync.mjs backfill-main-fingerprints",
     "start": "next start",
     "lint": "eslint"
   },

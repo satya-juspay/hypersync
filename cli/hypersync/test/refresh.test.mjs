@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { refresh, createPatchFingerprint } from "../src/refresh.mjs";
+import {
+  backfillMainFingerprints,
+  createPatchFingerprint,
+  refresh,
+} from "../src/refresh.mjs";
 
 const originalFetch = globalThis.fetch;
 const originalEnv = {
@@ -104,4 +108,58 @@ test("refresh stops at the cursor without scanning older pages", async () => {
 
 test("fingerprint format matches the dashboard scorer", () => {
   assert.equal(createPatchFingerprint("--- a/a.ts\n+++ b/a.ts\n-old\n+new\n"), "a.ts\t+new\na.ts\t-old");
+});
+
+test("main fingerprint backfill only requests main PRs and preserves the sync cursor", async () => {
+  process.env.HYPERSYNC_URL = "https://hypersync.example.test";
+  process.env.HYPERSYNC_IMPORT_TOKEN = "import-test";
+  process.env.BITBUCKET_TOKEN = "bitbucket-test";
+  const actions = [];
+  let pendingCalls = 0;
+
+  globalThis.fetch = async (url, options) => {
+    const target = String(url);
+    if (target.endsWith("/api/import")) {
+      const body = JSON.parse(options.body);
+      actions.push(body);
+      if (body.action === "start") {
+        return Response.json({ since: "2026-09-24T00:00:00.000Z" });
+      }
+      if (body.action === "pending") {
+        assert.equal(body.kind, "main");
+        assert.equal(body.limit, 50);
+        pendingCalls += 1;
+        return Response.json({
+          success: true,
+          records: pendingCalls === 1 ? [{ id: "7705", kind: "main" }] : [],
+        });
+      }
+      return Response.json({ success: true });
+    }
+
+    assert.equal(options.headers.Authorization, "Bearer bitbucket-test");
+    if (target.endsWith("/7705.diff")) {
+      return new Response("--- a/a.ts\n+++ b/a.ts\n-old\n+new\n");
+    }
+    assert.ok(target.endsWith("/7705"));
+    return Response.json({
+      id: 7705,
+      state: "OPEN",
+      title: "main",
+      toRef: { displayId: "main" },
+      fromRef: { displayId: "devqa-HYPSDK-12345-main" },
+      author: { user: { emailAddress: "a@example.com", displayName: "A" } },
+    });
+  };
+
+  await backfillMainFingerprints({ delayMs: 0 });
+
+  assert.deepEqual(
+    actions.map((action) => action.action),
+    ["start", "pending", "batch", "pending", "release"]
+  );
+  assert.equal(actions[2].records[0].id, "7705");
+  assert.equal(actions[2].records[0].kind, "main");
+  assert.equal(actions[2].records[0].patchFingerprint, "a.ts\t+new\na.ts\t-old");
+  assert.ok(!actions.some((action) => action.action === "finish"));
 });

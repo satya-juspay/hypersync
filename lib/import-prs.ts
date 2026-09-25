@@ -125,9 +125,34 @@ export async function importBatch(runId: string, records: ImportedPR[]) {
   return { processed: records.length };
 }
 
-export async function pendingFingerprints(runId: string, limit: number) {
+export async function pendingFingerprints(
+  runId: string,
+  limit: number,
+  kind?: "release" | "main"
+) {
   await renewImport(runId);
   const take = Math.min(Math.max(limit, 0), 50);
+
+  if (kind === "release") {
+    const release = await prisma.releasePR.findMany({
+      where: { patchFingerprint: null },
+      select: { id: true },
+      orderBy: { createdAt: "desc" },
+      take,
+    });
+    return release.map(({ id }) => ({ id, kind: "release" as const }));
+  }
+
+  if (kind === "main") {
+    const main = await prisma.mainPR.findMany({
+      where: { patchFingerprint: null },
+      select: { id: true },
+      orderBy: { createdAt: "desc" },
+      take,
+    });
+    return main.map(({ id }) => ({ id, kind: "main" as const }));
+  }
+
   const [release, main] = await Promise.all([
     prisma.releasePR.findMany({ where: { patchFingerprint: null }, select: { id: true }, orderBy: { createdAt: "desc" }, take }),
     prisma.mainPR.findMany({ where: { patchFingerprint: null }, select: { id: true }, orderBy: { createdAt: "desc" }, take }),
@@ -158,6 +183,10 @@ export async function finishImport(runId: string) {
 }
 
 export async function abortImport(runId: string) {
+  await releaseImport(runId);
+}
+
+export async function releaseImport(runId: string) {
   const aborted = await prisma.syncStatus.updateMany({
     where: { id: "singleton", isRunning: true, runId, leaseUntil: { gt: new Date() } },
     data: { isRunning: false, runId: null, runStartedAt: null, leaseUntil: null },

@@ -6,6 +6,7 @@ import {
   importBatch,
   ImportConflict,
   pendingFingerprints,
+  releaseImport,
   renewImport,
   startImport,
   type ImportedPR,
@@ -24,7 +25,13 @@ export async function POST(request: Request) {
   const contentLength = Number(request.headers.get("content-length") ?? 0);
   if (contentLength > MAX_BODY_BYTES) return NextResponse.json({ error: "Request too large" }, { status: 413 });
 
-  let body: { action?: string; runId?: string; records?: ImportedPR[]; limit?: number };
+  let body: {
+    action?: string;
+    runId?: string;
+    records?: ImportedPR[];
+    limit?: number;
+    kind?: "release" | "main";
+  };
   try {
     const raw = await request.text();
     if (Buffer.byteLength(raw) > MAX_BODY_BYTES) return NextResponse.json({ error: "Request too large" }, { status: 413 });
@@ -53,7 +60,12 @@ export async function POST(request: Request) {
         break;
       case "pending":
         if (!Number.isInteger(body.limit) || (body.limit ?? 0) < 0 || (body.limit ?? 0) > 50) throw new Error("Invalid limit");
-        result = { records: await pendingFingerprints(body.runId, body.limit!) };
+        if (body.kind !== undefined && !["release", "main"].includes(body.kind)) throw new Error("Invalid fingerprint kind");
+        result = { records: await pendingFingerprints(body.runId, body.limit!, body.kind) };
+        break;
+      case "release":
+        await releaseImport(body.runId);
+        result = {};
         break;
       case "finish":
         result = await finishImport(body.runId);

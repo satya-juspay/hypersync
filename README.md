@@ -152,6 +152,7 @@ Generate that shared secret with `openssl rand -hex 32`.
 
 ```bash
 node cli/hypersync/bin/hypersync.mjs refresh
+npm run backfill:main-fingerprints
 ```
 
 Only one CLI import may run at a time. Its five-minute lease is renewed during

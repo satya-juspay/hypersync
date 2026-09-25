@@ -6,6 +6,71 @@ const MAX_PAGES = 200;
 const BATCH_SIZE = 25;
 const FINGERPRINT_DELAY_MS = 1500;
 
+export async function backfillMainFingerprints({ limit = Infinity, delayMs = FINGERPRINT_DELAY_MS } = {}) {
+  const config = loadConfig();
+  const runId = randomUUID();
+  let started = false;
+  let leaseError;
+  let heartbeat;
+  let completed = 0;
+
+  try {
+    await send(config, { action: "start", runId });
+    started = true;
+    heartbeat = setInterval(() => {
+      send(config, { action: "heartbeat", runId }).catch((error) => { leaseError = error; });
+    }, 60_000);
+
+    while (completed < limit) {
+      if (leaseError) throw leaseError;
+      const batchLimit = Math.min(50, limit - completed);
+      const pending = await send(config, {
+        action: "pending",
+        runId,
+        kind: "main",
+        limit: batchLimit,
+      });
+      if (!pending.records?.length) break;
+
+      for (const item of pending.records) {
+        if (leaseError) throw leaseError;
+        const pr = await fetchBitbucket(config, prUrl(config, item.id), "json");
+        const record = toRecord(pr);
+        if (!record || record.kind !== "main") {
+          throw new Error(`Bitbucket PR #${item.id} no longer targets main`);
+        }
+
+        console.log(`Fingerprinting main PR #${item.id}`);
+        const diff = await fetchBitbucket(config, `${prUrl(config, item.id)}.diff`, "text");
+        const fingerprint = createPatchFingerprint(diff);
+        if (fingerprint.length > 200_000) {
+          throw new Error(`Fingerprint for main PR #${item.id} exceeds 200000 characters`);
+        }
+        await send(config, {
+          action: "batch",
+          runId,
+          records: [{ ...record, patchFingerprint: fingerprint }],
+        });
+        completed += 1;
+        console.log(`Backfilled ${completed} main PR fingerprint${completed === 1 ? "" : "s"}`);
+        if (completed < limit && delayMs > 0) await delay(delayMs);
+      }
+    }
+
+    if (leaseError) throw leaseError;
+    await send(config, { action: "release", runId });
+    started = false;
+    console.log(`Main PR fingerprint backfill complete. ${completed} updated.`);
+  } catch (error) {
+    if (started) {
+      try { await send(config, { action: "abort", runId }); } catch { /* Lease expires after a crash. */ }
+    }
+    throw error;
+  } finally {
+    if (heartbeat) clearInterval(heartbeat);
+  }
+}
+
 export async function refresh({ fingerprintLimit = 20 } = {}) {
   const config = loadConfig();
   const runId = randomUUID();
