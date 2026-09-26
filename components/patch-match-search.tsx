@@ -2,13 +2,20 @@
 
 import { useState } from "react";
 import { ExternalLink, Loader2, Search, Target } from "lucide-react";
+import { StatusBadge } from "@/components/status-badge";
 import type { PatchScore } from "@/lib/patch-score";
+import type { ReleasePRStatus } from "@/types/hypersync";
+
+type MainPRStatus = Extract<
+  ReleasePRStatus,
+  "OPEN" | "MERGED" | "DECLINED"
+>;
 
 type PatchMatch = PatchScore & {
   title: string;
   author: string;
   displayName: string;
-  status: string;
+  status: MainPRStatus;
   mergedAt: string | null;
   bitbucketUrl: string;
 };
@@ -132,11 +139,12 @@ export function PatchMatchSearch({
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-blue-100">
-          <table className="w-full min-w-[760px] text-sm">
+          <table className="w-full min-w-[860px] text-sm">
             <thead>
               <tr className="border-b border-blue-100 bg-blue-50/60 text-left text-xs font-semibold uppercase tracking-wider text-blue-500">
                 <th className="px-4 py-3">Score</th>
                 <th className="px-4 py-3">Main PR</th>
+                <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Title</th>
                 <th className="px-4 py-3">Author</th>
                 <th className="px-4 py-3">Overlap</th>
@@ -159,6 +167,9 @@ export function PatchMatchSearch({
                       #{match.mainPrId}
                       <ExternalLink className="h-3 w-3" />
                     </a>
+                  </td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={match.status} />
                   </td>
                   <td className="max-w-xs px-4 py-3 text-slate-800">
                     <span className="line-clamp-2">{match.title}</span>
