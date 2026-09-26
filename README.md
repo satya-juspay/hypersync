@@ -9,7 +9,7 @@ Internal release PR synchronization dashboard for the **hyper-widget** Bitbucket
 - **Dashboard** — summary cards, contributor leaderboard, searchable release PR table
 - **PR detail page** — release metadata, editable main PR ID, and approval controls
 - **Admin roles** — super admin plus removable admins for editing any PR
-- **Patch score search** — author/admin-only server-side matching against stored main PR patch fingerprints
+- **Patch score search** — author/admin-only server-side matching against versioned SHA-256 patch fingerprints
 - **Paginated DB reads** — filter, sort, and page through release PRs without returning diffs or fingerprints
 - **Office-network importer** — a separate npm CLI fetches Bitbucket PRs and uploads them in small batches
 
@@ -152,7 +152,7 @@ Generate that shared secret with `openssl rand -hex 32`.
 
 ```bash
 node cli/hypersync/bin/hypersync.mjs refresh
-npm run backfill:main-fingerprints
+npm run refresh
 ```
 
 Only one CLI import may run at a time. Its five-minute lease is renewed during

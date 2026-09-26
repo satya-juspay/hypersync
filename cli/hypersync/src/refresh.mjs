@@ -1,50 +1,38 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 const INITIAL_SYNC = Date.parse("2026-01-01T00:00:00.000Z");
 const PAGE_SIZE = 100;
 const MAX_PAGES = 200;
 const BATCH_SIZE = 25;
 const FINGERPRINT_DELAY_MS = 1500;
+const FINGERPRINT_VERSION = "v2";
+const MAX_FINGERPRINT = 750_000;
 
-export async function backfillMainFingerprints({ limit = Infinity, delayMs = FINGERPRINT_DELAY_MS } = {}) {
-  const config = loadConfig();
-  const runId = randomUUID();
-  let started = false;
-  let leaseError;
-  let heartbeat;
+async function backfillFingerprints(config, runId, kind, byId, assertLease, delayMs) {
+  const label = kind === "main" ? "main" : "release";
   let completed = 0;
+  const skipped = new Set();
 
-  try {
-    await send(config, { action: "start", runId });
-    started = true;
-    heartbeat = setInterval(() => {
-      send(config, { action: "heartbeat", runId }).catch((error) => { leaseError = error; });
-    }, 60_000);
-
-    while (completed < limit) {
-      if (leaseError) throw leaseError;
-      const batchLimit = Math.min(50, limit - completed);
-      const pending = await send(config, {
-        action: "pending",
-        runId,
-        kind: "main",
-        limit: batchLimit,
-      });
-      if (!pending.records?.length) break;
-
-      for (const item of pending.records) {
-        if (leaseError) throw leaseError;
-        const pr = await fetchBitbucket(config, prUrl(config, item.id), "json");
+  async function processItems(items) {
+    for (const item of items) {
+      assertLease();
+      try {
+        const pr = byId.get(item.id)
+          ?? await fetchBitbucket(config, prUrl(config, item.id), "json");
         const record = toRecord(pr);
-        if (!record || record.kind !== "main") {
-          throw new Error(`Bitbucket PR #${item.id} no longer targets main`);
+        if (!record || record.kind !== kind) {
+          skipped.add(item.id);
+          console.warn(`Skipped ${label} PR #${item.id}: it is no longer an eligible ${label} PR`);
+          continue;
         }
 
-        console.log(`Fingerprinting main PR #${item.id}`);
+        console.log(`Fingerprinting ${label} PR #${item.id}`);
         const diff = await fetchBitbucket(config, `${prUrl(config, item.id)}.diff`, "text");
         const fingerprint = createPatchFingerprint(diff);
-        if (fingerprint.length > 200_000) {
-          throw new Error(`Fingerprint for main PR #${item.id} exceeds 200000 characters`);
+        if (fingerprint.length > MAX_FINGERPRINT) {
+          skipped.add(item.id);
+          console.warn(`Skipped ${label} PR #${item.id}: fingerprint exceeds ${MAX_FINGERPRINT} characters`);
+          continue;
         }
         await send(config, {
           action: "batch",
@@ -52,26 +40,50 @@ export async function backfillMainFingerprints({ limit = Infinity, delayMs = FIN
           records: [{ ...record, patchFingerprint: fingerprint }],
         });
         completed += 1;
-        console.log(`Backfilled ${completed} main PR fingerprint${completed === 1 ? "" : "s"}`);
-        if (completed < limit && delayMs > 0) await delay(delayMs);
+        console.log(`${label === "main" ? "Main" : "Release"} fingerprints updated: ${completed}; skipped: ${skipped.size}`);
+        if (delayMs > 0) await delay(delayMs);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!/^Bitbucket (404|5\d\d):/.test(message)) throw error;
+        skipped.add(item.id);
+        console.warn(`Skipped ${label} PR #${item.id}: ${message}`);
       }
     }
-
-    if (leaseError) throw leaseError;
-    await send(config, { action: "release", runId });
-    started = false;
-    console.log(`Main PR fingerprint backfill complete. ${completed} updated.`);
-  } catch (error) {
-    if (started) {
-      try { await send(config, { action: "abort", runId }); } catch { /* Lease expires after a crash. */ }
-    }
-    throw error;
-  } finally {
-    if (heartbeat) clearInterval(heartbeat);
   }
+
+  const changed = [...byId.entries()]
+    .filter(([, pr]) => toRecord(pr)?.kind === kind)
+    .map(([id]) => ({ id, kind }));
+  if (changed.length > 0) {
+    console.log(`Refreshing fingerprints for ${changed.length} updated ${label} PR${changed.length === 1 ? "" : "s"}...`);
+    await processItems(changed);
+  }
+
+  console.log(`Backfilling missing ${label} PR fingerprints...`);
+  while (true) {
+    assertLease();
+    const pending = await send(config, {
+      action: "pending",
+      runId,
+      kind,
+      limit: 50,
+      excludeIds: [...skipped],
+    });
+    if (!pending.records?.length) break;
+    const candidates = pending.records.filter((item) => !skipped.has(item.id));
+    if (!candidates.length) break;
+    console.log(`Processing ${candidates.length} ${label} PR fingerprint${candidates.length === 1 ? "" : "s"}`);
+
+    await processItems(candidates);
+  }
+
+  console.log(
+    `${label === "main" ? "Main" : "Release"} PR fingerprint phase complete. ${completed} updated, ${skipped.size} skipped.`
+  );
+  return { completed, skipped: skipped.size };
 }
 
-export async function refresh({ fingerprintLimit = 20 } = {}) {
+export async function refresh({ delayMs = FINGERPRINT_DELAY_MS } = {}) {
   const config = loadConfig();
   const runId = randomUUID();
   let started = false;
@@ -97,40 +109,36 @@ export async function refresh({ fingerprintLimit = 20 } = {}) {
       console.log(`Uploaded ${Math.min(offset + BATCH_SIZE, selected.length)}/${selected.length} PRs`);
     }
 
-    if (fingerprintLimit > 0) {
-      const pending = await send(config, { action: "pending", runId, limit: fingerprintLimit });
-      let completed = 0;
-      for (const item of pending.records) {
-        if (leaseError) throw leaseError;
-        let pr = byId.get(item.id);
-        if (!pr) pr = await fetchBitbucket(config, prUrl(config, item.id), "json");
-        const record = toRecord(pr);
-        if (!record || record.kind !== item.kind) continue;
-        try {
-          const diff = await fetchBitbucket(config, `${prUrl(config, item.id)}.diff`, "text");
-          const fingerprint = createPatchFingerprint(diff);
-          if (fingerprint.length > 200_000) {
-            console.warn(`Skipped oversized fingerprint for PR #${item.id}`);
-            continue;
-          }
-          await send(config, { action: "batch", runId, records: [{ ...record, patchFingerprint: fingerprint }] });
-          completed += 1;
-        } catch (error) {
-          if (/rate limit|403|429/i.test(error.message)) {
-            console.warn("Bitbucket rate limit reached; remaining fingerprints will be retried on a later run.");
-            break;
-          }
-          console.warn(`Could not fingerprint PR #${item.id}: ${error.message}`);
-        }
-        await delay(FINGERPRINT_DELAY_MS);
-      }
-      console.log(`Fingerprints uploaded: ${completed}`);
-    }
+    const assertLease = () => {
+      if (leaseError) throw leaseError;
+    };
+    const releaseFingerprints = await backfillFingerprints(
+      config,
+      runId,
+      "release",
+      byId,
+      assertLease,
+      delayMs
+    );
+    const mainFingerprints = await backfillFingerprints(
+      config,
+      runId,
+      "main",
+      byId,
+      assertLease,
+      delayMs
+    );
 
     if (leaseError) throw leaseError;
     const finished = await send(config, { action: "finish", runId });
     started = false;
-    console.log(`Import complete. ${selected.length} PRs uploaded; cursor ${finished.lastSynced}`);
+    console.log(
+      `Refresh complete. ${selected.length} PR metadata records uploaded, ` +
+      `${releaseFingerprints.completed} release fingerprints updated, ` +
+      `${mainFingerprints.completed} main fingerprints updated, ` +
+      `${releaseFingerprints.skipped + mainFingerprints.skipped} fingerprints skipped; ` +
+      `cursor ${finished.lastSynced}`
+    );
   } catch (error) {
     if (started) {
       try { await send(config, { action: "abort", runId }); } catch { /* Lease expires after a crash. */ }
@@ -267,7 +275,9 @@ function extractMainPrId(description) {
 }
 
 export function createPatchFingerprint(diff) {
-  const changes = [];
+  const files = new Set();
+  const addedLines = new Set();
+  const removedLines = new Set();
   let filePath = "";
   for (const rawLine of diff.split("\n")) {
     const line = rawLine.trimEnd();
@@ -277,9 +287,22 @@ export function createPatchFingerprint(diff) {
     }
     if (line.startsWith("--- ") || (!line.startsWith("+") && !line.startsWith("-"))) continue;
     const normalized = line.replace(/\s+/g, " ").trim();
-    if (normalized) changes.push(`${filePath}\t${normalized}`);
+    if (!normalized) continue;
+    const rawToken = `${filePath}\t${normalized}`;
+    files.add(`F:${hashToken(filePath)}`);
+    if (normalized.startsWith("+")) addedLines.add(`A:${hashToken(rawToken)}`);
+    else removedLines.add(`R:${hashToken(rawToken)}`);
   }
-  return changes.sort().join("\n");
+  return [
+    FINGERPRINT_VERSION,
+    ...[...files].sort(),
+    ...[...addedLines].sort(),
+    ...[...removedLines].sort(),
+  ].join("\n");
+}
+
+function hashToken(value) {
+  return createHash("sha256").update(value).digest("base64url");
 }
 
 function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }

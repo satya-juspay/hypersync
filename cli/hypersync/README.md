@@ -29,30 +29,20 @@ After moving this directory to its own repository and publishing the
 npx hypersync-office-cli refresh
 ```
 
-Each run uploads PRs updated since the last successful run. A run first uploads
-metadata, then fetches up to 20 missing patch fingerprints one at a time, with
-a short pause between Bitbucket diff calls. To change that limit:
+Each run uploads PR metadata updated since the last successful run, then fills
+every missing release and main PR patch fingerprint already represented in the
+database. Progress is logged for every PR and phase. A failed run leaves its
+cursor unchanged, and rerunning resumes from fingerprints already stored
+without creating duplicate rows.
 
-```bash
-npx hypersync-office-cli refresh --fingerprints 0
-npx hypersync-office-cli refresh --fingerprints 50
-```
+Fingerprints contain versioned SHA-256 tokens for file paths, added lines, and
+removed lines rather than raw source text. The scorer remains compatible with
+legacy fingerprints while refresh replaces them with the compact format.
 
-Run again to fill more missing fingerprints. A failed run leaves its cursor
-unchanged, and repeated uploads update the same PR IDs without duplicate rows.
-Only one importer can hold the database lease at a time. If the process dies,
-the lease expires after five minutes.
-
-To backfill patch fingerprints for every main PR already stored in the database,
-without scanning PR metadata or advancing the sync cursor, run:
-
-```bash
-node cli/hypersync/bin/hypersync.mjs backfill-main-fingerprints
-```
-
-Use `--limit N` to process only the next N missing main PR fingerprints. The
-command is resumable: rerunning it skips rows whose fingerprints are already
-stored.
+Only one refresh can hold the database lease at a time. If the process dies,
+the lease expires after five minutes. Oversized fingerprints and per-PR
+Bitbucket 404/5xx failures are reported and skipped so the remaining PRs can
+continue.
 
 The unscoped npm name `hypersync` is already taken. The package name
 `hypersync-office-cli` was unregistered when this package was prepared; verify

@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import {
-  backfillMainFingerprints,
-  createPatchFingerprint,
-  refresh,
-} from "../src/refresh.mjs";
+import { createPatchFingerprint, refresh } from "../src/refresh.mjs";
 
 const originalFetch = globalThis.fetch;
 const originalEnv = {
@@ -37,6 +33,9 @@ test("refresh uploads eligible PRs and advances the cursor", async () => {
       return Response.json({ success: true });
     }
     assert.equal(options.headers.Authorization, "Bearer bitbucket-test");
+    if (target.endsWith(".diff")) {
+      return new Response("--- a/a.ts\n+++ b/a.ts\n-old\n+new\n");
+    }
     const query = new URL(target).searchParams;
     assert.equal(query.get("order"), "NEWEST");
     assert.equal(query.get("limit"), "100");
@@ -63,8 +62,13 @@ test("refresh uploads eligible PRs and advances the cursor", async () => {
     }], isLastPage: true });
   };
 
-  await refresh({ fingerprintLimit: 0 });
-  assert.deepEqual(actions.map((action) => action.action), ["start", "batch", "finish"]);
+  await refresh({ delayMs: 0 });
+  assert.equal(actions[0].action, "start");
+  assert.equal(actions.at(-1).action, "finish");
+  assert.deepEqual(
+    actions.filter((action) => action.action === "pending").map((action) => action.kind),
+    ["release", "main"]
+  );
   assert.equal(actions[1].records.length, 2);
   assert.equal(actions[1].records[0].kind, "release");
   assert.equal(actions[1].records[1].kind, "main");
@@ -86,6 +90,9 @@ test("refresh stops at the cursor without scanning older pages", async () => {
       if (body.action === "finish") return Response.json({ lastSynced: "2026-09-25T00:00:00.000Z" });
       return Response.json({ success: true });
     }
+    if (target.endsWith(".diff")) {
+      return new Response("--- a/a.ts\n+++ b/a.ts\n-old\n+new\n");
+    }
     const query = new URL(target).searchParams;
     requests.push(query);
     assert.equal(query.get("start"), "0");
@@ -100,22 +107,29 @@ test("refresh stops at the cursor without scanning older pages", async () => {
     });
   };
 
-  await refresh({ fingerprintLimit: 0 });
+  await refresh({ delayMs: 0 });
   assert.equal(requests.length, 3);
-  assert.deepEqual(actions.map((action) => action.action), ["start", "batch", "finish"]);
+  assert.equal(actions[0].action, "start");
+  assert.equal(actions.at(-1).action, "finish");
   assert.deepEqual(actions[1].records.map((record) => record.kind), ["release", "main", "main"]);
 });
 
 test("fingerprint format matches the dashboard scorer", () => {
-  assert.equal(createPatchFingerprint("--- a/a.ts\n+++ b/a.ts\n-old\n+new\n"), "a.ts\t+new\na.ts\t-old");
+  const fingerprint = createPatchFingerprint(
+    "--- a/a.ts\n+++ b/a.ts\n-old\n+new\n"
+  );
+  assert.match(fingerprint, /^v2\nF:[A-Za-z0-9_-]{43}\nA:[A-Za-z0-9_-]{43}\nR:[A-Za-z0-9_-]{43}$/);
+  assert.ok(!fingerprint.includes("a.ts"));
+  assert.ok(!fingerprint.includes("old"));
+  assert.ok(!fingerprint.includes("new"));
 });
 
-test("main fingerprint backfill only requests main PRs and preserves the sync cursor", async () => {
+test("refresh exhausts release and main fingerprints before advancing the cursor", async () => {
   process.env.HYPERSYNC_URL = "https://hypersync.example.test";
   process.env.HYPERSYNC_IMPORT_TOKEN = "import-test";
   process.env.BITBUCKET_TOKEN = "bitbucket-test";
   const actions = [];
-  let pendingCalls = 0;
+  const pendingCalls = { release: 0, main: 0 };
 
   globalThis.fetch = async (url, options) => {
     const target = String(url);
@@ -123,43 +137,71 @@ test("main fingerprint backfill only requests main PRs and preserves the sync cu
       const body = JSON.parse(options.body);
       actions.push(body);
       if (body.action === "start") {
-        return Response.json({ since: "2026-09-24T00:00:00.000Z" });
+        return Response.json({ since: "2026-09-25T00:00:00.000Z" });
+      }
+      if (body.action === "finish") {
+        return Response.json({ lastSynced: "2026-09-26T00:00:00.000Z" });
       }
       if (body.action === "pending") {
-        assert.equal(body.kind, "main");
         assert.equal(body.limit, 50);
-        pendingCalls += 1;
+        pendingCalls[body.kind] += 1;
+        if (pendingCalls[body.kind] > 1) {
+          if (body.kind === "main") {
+            assert.deepEqual(body.excludeIds, ["6648"]);
+          }
+          return Response.json({ success: true, records: [] });
+        }
         return Response.json({
           success: true,
-          records: pendingCalls === 1 ? [{ id: "7705", kind: "main" }] : [],
+          records: body.kind === "release"
+            ? [{ id: "7704", kind: "release" }]
+            : [
+                { id: "6262", kind: "main" },
+                { id: "6648", kind: "main" },
+                { id: "7705", kind: "main" },
+              ],
         });
       }
       return Response.json({ success: true });
     }
 
-    assert.equal(options.headers.Authorization, "Bearer bitbucket-test");
+    const parsed = new URL(target);
+    if (parsed.searchParams.has("state")) {
+      return Response.json({ values: [], isLastPage: true });
+    }
+    if (target.endsWith("/7704.diff")) {
+      return new Response("--- a/a.ts\n+++ b/a.ts\n-old\n+new\n");
+    }
     if (target.endsWith("/7705.diff")) {
       return new Response("--- a/a.ts\n+++ b/a.ts\n-old\n+new\n");
     }
-    assert.ok(target.endsWith("/7705"));
+    if (target.endsWith("/6262.diff")) {
+      return new Response(`--- a/large.ts\n+++ b/large.ts\n+${"x".repeat(200_001)}\n`);
+    }
+    if (target.endsWith("/6648.diff")) {
+      return new Response("temporary Bitbucket Git failure", { status: 500 });
+    }
+    const id = Number(target.split("/").at(-1));
+    const release = id === 7704;
     return Response.json({
-      id: 7705,
-      state: "OPEN",
-      title: "main",
-      toRef: { displayId: "main" },
-      fromRef: { displayId: "devqa-HYPSDK-12345-main" },
+      id,
+      state: release ? "MERGED" : "OPEN",
+      title: release ? "release" : "main",
+      closedDate: release ? Date.parse("2026-09-25") : undefined,
+      toRef: { displayId: release ? "release-20260915" : "main" },
+      fromRef: { displayId: `devqa-HYPSDK-${id}` },
       author: { user: { emailAddress: "a@example.com", displayName: "A" } },
     });
   };
 
-  await backfillMainFingerprints({ delayMs: 0 });
+  await refresh({ delayMs: 0 });
 
-  assert.deepEqual(
-    actions.map((action) => action.action),
-    ["start", "pending", "batch", "pending", "release"]
+  const fingerprintBatches = actions.filter(
+    (action) => action.action === "batch" && action.records[0]?.patchFingerprint !== undefined
   );
-  assert.equal(actions[2].records[0].id, "7705");
-  assert.equal(actions[2].records[0].kind, "main");
-  assert.equal(actions[2].records[0].patchFingerprint, "a.ts\t+new\na.ts\t-old");
-  assert.ok(!actions.some((action) => action.action === "finish"));
+  assert.deepEqual(
+    fingerprintBatches.map((action) => [action.records[0].id, action.records[0].kind]),
+    [["7704", "release"], ["6262", "main"], ["7705", "main"]]
+  );
+  assert.equal(actions.at(-1).action, "finish");
 });

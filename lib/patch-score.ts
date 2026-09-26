@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+
+const FINGERPRINT_VERSION = "v2";
+
 export type PatchScore = {
   mainPrId: string;
   score: number;
@@ -21,7 +25,9 @@ type ParsedPatchFingerprint = {
 };
 
 export function createPatchFingerprint(diff: string) {
-  const changes: string[] = [];
+  const files = new Set<string>();
+  const addedLines = new Set<string>();
+  const removedLines = new Set<string>();
   let filePath = "";
 
   for (const rawLine of diff.split("\n")) {
@@ -43,11 +49,22 @@ export function createPatchFingerprint(diff: string) {
     const normalizedLine = line.replace(/\s+/g, " ").trim();
 
     if (normalizedLine) {
-      changes.push(`${filePath}\t${normalizedLine}`);
+      const rawToken = `${filePath}\t${normalizedLine}`;
+      files.add(fileToken(filePath));
+      if (normalizedLine.startsWith("+")) {
+        addedLines.add(`A:${hashToken(rawToken)}`);
+      } else {
+        removedLines.add(`R:${hashToken(rawToken)}`);
+      }
     }
   }
 
-  return changes.sort().join("\n");
+  return [
+    FINGERPRINT_VERSION,
+    ...[...files].sort(),
+    ...[...addedLines].sort(),
+    ...[...removedLines].sort(),
+  ].join("\n");
 }
 
 export function findPatchMatchesFromFingerprints(
@@ -92,24 +109,44 @@ function parsePatchFingerprint(fingerprint: string): ParsedPatchFingerprint {
   const files = new Set<string>();
   const addedLines = new Set<string>();
   const removedLines = new Set<string>();
+  const lines = fingerprint.split("\n");
 
-  for (const line of fingerprint.split("\n")) {
+  if (lines[0] === FINGERPRINT_VERSION) {
+    for (const line of lines.slice(1)) {
+      if (line.startsWith("F:")) files.add(line);
+      else if (line.startsWith("A:")) addedLines.add(line);
+      else if (line.startsWith("R:")) removedLines.add(line);
+    }
+    return { files, addedLines, removedLines };
+  }
+
+  // Convert legacy raw fingerprints to the same tokens in memory so old and
+  // new rows remain comparable while refresh gradually rewrites them.
+  for (const line of lines) {
     const separatorIndex = line.lastIndexOf("\t");
     if (separatorIndex === -1) continue;
 
     const filePath = line.slice(0, separatorIndex);
     const changedLine = line.slice(separatorIndex + 1);
 
-    files.add(filePath);
+    files.add(fileToken(filePath));
 
     if (changedLine.startsWith("+")) {
-      addedLines.add(line);
+      addedLines.add(`A:${hashToken(line)}`);
     } else if (changedLine.startsWith("-")) {
-      removedLines.add(line);
+      removedLines.add(`R:${hashToken(line)}`);
     }
   }
 
   return { files, addedLines, removedLines };
+}
+
+function fileToken(filePath: string) {
+  return `F:${hashToken(filePath)}`;
+}
+
+function hashToken(value: string) {
+  return createHash("sha256").update(value).digest("base64url");
 }
 
 function scorePatchSimilarity(

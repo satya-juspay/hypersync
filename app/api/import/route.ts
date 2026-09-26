@@ -31,6 +31,7 @@ export async function POST(request: Request) {
     records?: ImportedPR[];
     limit?: number;
     kind?: "release" | "main";
+    excludeIds?: string[];
   };
   try {
     const raw = await request.text();
@@ -61,7 +62,17 @@ export async function POST(request: Request) {
       case "pending":
         if (!Number.isInteger(body.limit) || (body.limit ?? 0) < 0 || (body.limit ?? 0) > 50) throw new Error("Invalid limit");
         if (body.kind !== undefined && !["release", "main"].includes(body.kind)) throw new Error("Invalid fingerprint kind");
-        result = { records: await pendingFingerprints(body.runId, body.limit!, body.kind) };
+        if (body.excludeIds !== undefined && (!Array.isArray(body.excludeIds) || body.excludeIds.length > 5000 || body.excludeIds.some((id) => typeof id !== "string" || !/^[0-9]+$/.test(id)))) {
+          throw new Error("Invalid excluded fingerprint IDs");
+        }
+        result = {
+          records: await pendingFingerprints(
+            body.runId,
+            body.limit!,
+            body.kind,
+            body.excludeIds
+          ),
+        };
         break;
       case "release":
         await releaseImport(body.runId);

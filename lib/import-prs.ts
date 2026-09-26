@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 const FIRST_SYNC = new Date("2026-01-01T00:00:00.000Z");
 const LEASE_MS = 5 * 60 * 1000;
 const MAX_BATCH = 25;
-const MAX_FINGERPRINT = 200_000;
+const MAX_FINGERPRINT = 750_000;
 
 export type ImportedPR = {
   id: string;
@@ -128,14 +128,19 @@ export async function importBatch(runId: string, records: ImportedPR[]) {
 export async function pendingFingerprints(
   runId: string,
   limit: number,
-  kind?: "release" | "main"
+  kind?: "release" | "main",
+  excludeIds: string[] = []
 ) {
   await renewImport(runId);
   const take = Math.min(Math.max(limit, 0), 50);
+  const where = {
+    patchFingerprint: null,
+    ...(excludeIds.length > 0 && { id: { notIn: excludeIds } }),
+  };
 
   if (kind === "release") {
     const release = await prisma.releasePR.findMany({
-      where: { patchFingerprint: null },
+      where,
       select: { id: true },
       orderBy: { createdAt: "desc" },
       take,
@@ -145,7 +150,7 @@ export async function pendingFingerprints(
 
   if (kind === "main") {
     const main = await prisma.mainPR.findMany({
-      where: { patchFingerprint: null },
+      where,
       select: { id: true },
       orderBy: { createdAt: "desc" },
       take,
@@ -154,8 +159,8 @@ export async function pendingFingerprints(
   }
 
   const [release, main] = await Promise.all([
-    prisma.releasePR.findMany({ where: { patchFingerprint: null }, select: { id: true }, orderBy: { createdAt: "desc" }, take }),
-    prisma.mainPR.findMany({ where: { patchFingerprint: null }, select: { id: true }, orderBy: { createdAt: "desc" }, take }),
+    prisma.releasePR.findMany({ where, select: { id: true }, orderBy: { createdAt: "desc" }, take }),
+    prisma.mainPR.findMany({ where, select: { id: true }, orderBy: { createdAt: "desc" }, take }),
   ]);
   const records: Array<{ id: string; kind: "release" | "main" }> = [];
   for (let index = 0; records.length < take && index < take; index++) {
