@@ -35,10 +35,10 @@ export async function GET(request: NextRequest) {
   const requestedPageSize = positiveInteger(params.get("pageSize"), 10);
   const pageSize = PAGE_SIZES.has(requestedPageSize) ? requestedPageSize : 10;
   const query = params.get("q")?.trim().toLowerCase() ?? "";
-  const requestedStatus = params.get("status")?.toUpperCase() ?? "ALL";
-  const status = STATUSES.has(requestedStatus as ReleasePRStatus)
-    ? (requestedStatus as ReleasePRStatus)
-    : null;
+  const contributor = params.get("contributor")?.trim().toLowerCase() ?? "";
+  const releaseBranch =
+    params.get("releaseBranch")?.trim().toLowerCase() ?? "";
+  const statuses = selectedStatuses(params);
   const requestedSort = params.get("sortBy") ?? "mergedAt";
   const sortBy = SORT_FIELDS.has(requestedSort)
     ? (requestedSort as SortField)
@@ -67,7 +67,18 @@ export async function GET(request: NextRequest) {
   const { leaderboard, branchLeaderboard } = buildLeaderboards(allReleasePRs);
   const filtered = allReleasePRs
     .filter((releasePR) => matchesQuery(releasePR, query))
-    .filter((releasePR) => !status || releasePR.syncStatus === status)
+    .filter(
+      (releasePR) =>
+        !contributor || contributorName(releasePR).toLowerCase() === contributor
+    )
+    .filter(
+      (releasePR) =>
+        !releaseBranch ||
+        releasePR.releaseBranch.toLowerCase() === releaseBranch
+    )
+    .filter(
+      (releasePR) => statuses === null || statuses.has(releasePR.syncStatus)
+    )
     .sort((left, right) => compareReleasePRs(left, right, sortBy, sortDirection));
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const page = Math.min(requestedPage, totalPages);
@@ -93,6 +104,26 @@ export async function GET(request: NextRequest) {
   });
 }
 
+function selectedStatuses(params: URLSearchParams) {
+  const requestedStatuses = params.get("statuses");
+  if (requestedStatuses !== null) {
+    return new Set(
+      requestedStatuses
+        .split(",")
+        .map((status) => status.trim().toUpperCase())
+        .filter((status): status is ReleasePRStatus =>
+          STATUSES.has(status as ReleasePRStatus)
+        )
+    );
+  }
+
+  // Preserve compatibility with links using the former single-status filter.
+  const requestedStatus = params.get("status")?.toUpperCase();
+  return requestedStatus && STATUSES.has(requestedStatus as ReleasePRStatus)
+    ? new Set([requestedStatus as ReleasePRStatus])
+    : null;
+}
+
 function positiveInteger(value: string | null, fallback: number) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -109,6 +140,14 @@ function matchesQuery(releasePR: ReleasePR, query: string) {
     releasePR.releaseBranch,
     releasePR.mainPrId,
   ].some((value) => value?.toLowerCase().includes(query));
+}
+
+function contributorName(releasePR: ReleasePR) {
+  return (
+    releasePR.author.trim() ||
+    releasePR.displayName?.trim() ||
+    "Unknown contributor"
+  );
 }
 
 function summarize(releasePRs: ReleasePR[]) {
@@ -140,10 +179,7 @@ function buildLeaderboards(releasePRs: ReleasePR[]) {
       continue;
     }
 
-    const contributor =
-      releasePR.author.trim() ||
-      releasePR.displayName?.trim() ||
-      "Unknown contributor";
+    const contributor = contributorName(releasePR);
     authors.set(contributor, (authors.get(contributor) ?? 0) + 1);
     branches.set(
       releasePR.releaseBranch,

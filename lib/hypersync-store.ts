@@ -3,7 +3,15 @@
 import { useSyncExternalStore } from "react";
 import type { ReleasePR, ReleasePRStatus, SyncStatus } from "@/types/hypersync";
 
-export type DashboardStatusFilter = "ALL" | ReleasePRStatus;
+export const DASHBOARD_STATUSES = [
+  "MERGED",
+  "OPEN",
+  "DECLINED",
+  "INVALID",
+  "APPROVED",
+  "MISSING",
+] as const satisfies readonly ReleasePRStatus[];
+export type DashboardStatusFilter = (typeof DASHBOARD_STATUSES)[number];
 export type DashboardSortOption =
   | "mergedAt"
   | "updatedAt"
@@ -15,9 +23,11 @@ export type DashboardPageSize = 10 | 50 | 100;
 
 export type DashboardViewState = {
   query: string;
+  contributorFilter: string | null;
+  releaseBranchFilter: string | null;
   pageSize: DashboardPageSize;
   currentPage: number;
-  statusFilter: DashboardStatusFilter;
+  statusFilters: DashboardStatusFilter[];
   sortBy: DashboardSortOption;
   sortDirection: DashboardSortDirection;
 };
@@ -69,9 +79,11 @@ const initialPagination: DashboardPagination = {
 };
 const initialDashboardView: DashboardViewState = {
   query: "",
+  contributorFilter: null,
+  releaseBranchFilter: null,
   pageSize: 10,
   currentPage: 1,
-  statusFilter: "ALL",
+  statusFilters: [...DASHBOARD_STATUSES],
   sortBy: "mergedAt",
   sortDirection: "desc",
 };
@@ -152,12 +164,18 @@ export async function syncAndLoad(
   const params = new URLSearchParams({
     page: String(view.currentPage),
     pageSize: String(view.pageSize),
-    status: view.statusFilter,
+    statuses: view.statusFilters.join(","),
     sortBy: view.sortBy,
     sortDirection: view.sortDirection,
   });
 
   if (view.query.trim()) params.set("q", view.query.trim());
+  if (view.contributorFilter) {
+    params.set("contributor", view.contributorFilter);
+  }
+  if (view.releaseBranchFilter) {
+    params.set("releaseBranch", view.releaseBranchFilter);
+  }
 
   setState({
     loading: !state.initialized,
