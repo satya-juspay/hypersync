@@ -8,14 +8,27 @@ const FINGERPRINT_DELAY_MS = 1500;
 const FINGERPRINT_VERSION = "v2";
 const MAX_FINGERPRINT = 750_000;
 
-async function backfillFingerprints(config, runId, kind, byId, assertLease, delayMs) {
+async function backfillFingerprints(
+  config,
+  runId,
+  kind,
+  byId,
+  assertLease,
+  delayMs,
+  persistedFailures = []
+) {
   const label = kind === "main" ? "main" : "release";
   let completed = 0;
-  const skipped = new Set();
+  const skipped = new Set(persistedFailures);
+
+  if (skipped.size > 0) {
+    console.log(`Skipping ${skipped.size} ${label} PR fingerprint${skipped.size === 1 ? "" : "s"} previously marked with Bitbucket HTTP 500`);
+  }
 
   async function processItems(items) {
     for (const item of items) {
       assertLease();
+      let fetchingDiff = false;
       try {
         const pr = byId.get(item.id)
           ?? await fetchBitbucket(config, prUrl(config, item.id), "json");
@@ -27,7 +40,9 @@ async function backfillFingerprints(config, runId, kind, byId, assertLease, dela
         }
 
         console.log(`Fingerprinting ${label} PR #${item.id}`);
+        fetchingDiff = true;
         const diff = await fetchBitbucket(config, `${prUrl(config, item.id)}.diff`, "text");
+        fetchingDiff = false;
         const fingerprint = createPatchFingerprint(diff);
         if (fingerprint.length > MAX_FINGERPRINT) {
           skipped.add(item.id);
@@ -44,15 +59,26 @@ async function backfillFingerprints(config, runId, kind, byId, assertLease, dela
         if (delayMs > 0) await delay(delayMs);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (!/^Bitbucket (404|5\d\d):/.test(message)) throw error;
+        const status = Number(message.match(/^Bitbucket (\d{3}):/)?.[1]);
+        if (status !== 404 && !(status >= 500 && status <= 599)) throw error;
         skipped.add(item.id);
-        console.warn(`Skipped ${label} PR #${item.id}: ${message}`);
+        if (fetchingDiff && status === 500) {
+          await send(config, {
+            action: "fingerprint-failed",
+            runId,
+            kind,
+            id: item.id,
+          });
+          console.warn(`Skipped ${label} PR #${item.id} and marked it to prevent future diff checks: ${message}`);
+        } else {
+          console.warn(`Skipped ${label} PR #${item.id}: ${message}`);
+        }
       }
     }
   }
 
   const changed = [...byId.entries()]
-    .filter(([, pr]) => toRecord(pr)?.kind === kind)
+    .filter(([id, pr]) => !skipped.has(id) && toRecord(pr)?.kind === kind)
     .map(([id]) => ({ id, kind }));
   if (changed.length > 0) {
     console.log(`Refreshing fingerprints for ${changed.length} updated ${label} PR${changed.length === 1 ? "" : "s"}...`);
@@ -118,7 +144,8 @@ export async function refresh({ delayMs = FINGERPRINT_DELAY_MS } = {}) {
       "release",
       byId,
       assertLease,
-      delayMs
+      delayMs,
+      start.fingerprintFailures?.release
     );
     const mainFingerprints = await backfillFingerprints(
       config,
@@ -126,7 +153,8 @@ export async function refresh({ delayMs = FINGERPRINT_DELAY_MS } = {}) {
       "main",
       byId,
       assertLease,
-      delayMs
+      delayMs,
+      start.fingerprintFailures?.main
     );
 
     if (leaseError) throw leaseError;

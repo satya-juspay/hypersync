@@ -41,6 +41,7 @@ export async function startImport(runId: string) {
     return {
       since: (existing.lastSynced ?? FIRST_SYNC).toISOString(),
       startedAt: existing.runStartedAt!.toISOString(),
+      fingerprintFailures: await getFingerprintFailures(),
     };
   }
 
@@ -61,7 +62,11 @@ export async function startImport(runId: string) {
     },
   });
   if (claimed.count !== 1) throw new ImportConflict("Another import is running");
-  return { since: (existing.lastSynced ?? FIRST_SYNC).toISOString(), startedAt: now.toISOString() };
+  return {
+    since: (existing.lastSynced ?? FIRST_SYNC).toISOString(),
+    startedAt: now.toISOString(),
+    fingerprintFailures: await getFingerprintFailures(),
+  };
 }
 
 export async function renewImport(runId: string) {
@@ -91,7 +96,10 @@ export async function importBatch(runId: string, records: ImportedPR[]) {
           displayName: record.displayName,
           ...(record.sourceBranch && { sourceBranch: record.sourceBranch }),
           releaseBranch: record.releaseBranch!,
-          ...(fingerprint !== undefined && { patchFingerprint: fingerprint }),
+          ...(fingerprint !== undefined && {
+            patchFingerprint: fingerprint,
+            patchFingerprintError: null,
+          }),
           mergedAt,
         };
         await tx.releasePR.upsert({
@@ -111,7 +119,10 @@ export async function importBatch(runId: string, records: ImportedPR[]) {
           displayName: record.displayName,
           ...(record.sourceBranch && { sourceBranch: record.sourceBranch }),
           status: record.status!,
-          ...(fingerprint !== undefined && { patchFingerprint: fingerprint }),
+          ...(fingerprint !== undefined && {
+            patchFingerprint: fingerprint,
+            patchFingerprintError: null,
+          }),
           mergedAt,
         };
         await tx.mainPR.upsert({
@@ -135,6 +146,7 @@ export async function pendingFingerprints(
   const take = Math.min(Math.max(limit, 0), 50);
   const where = {
     patchFingerprint: null,
+    patchFingerprintError: null,
     ...(excludeIds.length > 0 && { id: { notIn: excludeIds } }),
   };
 
@@ -168,6 +180,51 @@ export async function pendingFingerprints(
     if (main[index] && records.length < take) records.push({ id: main[index].id, kind: "main" });
   }
   return records;
+}
+
+export async function markFingerprintFailed(
+  runId: string,
+  kind: "release" | "main",
+  id: string
+) {
+  if (!/^[0-9]+$/.test(id)) throw new Error("Invalid fingerprint PR ID");
+  await renewImport(runId);
+
+  const result = kind === "release"
+    ? await prisma.releasePR.updateMany({
+        where: { id },
+        data: {
+          patchFingerprint: null,
+          patchFingerprintError: "BITBUCKET_HTTP_500",
+        },
+      })
+    : await prisma.mainPR.updateMany({
+        where: { id },
+        data: {
+          patchFingerprint: null,
+          patchFingerprintError: "BITBUCKET_HTTP_500",
+        },
+      });
+
+  if (result.count !== 1) throw new Error("Invalid fingerprint PR target");
+}
+
+async function getFingerprintFailures() {
+  const [release, main] = await Promise.all([
+    prisma.releasePR.findMany({
+      where: { patchFingerprintError: { not: null } },
+      select: { id: true },
+    }),
+    prisma.mainPR.findMany({
+      where: { patchFingerprintError: { not: null } },
+      select: { id: true },
+    }),
+  ]);
+
+  return {
+    release: release.map(({ id }) => id),
+    main: main.map(({ id }) => id),
+  };
 }
 
 export async function finishImport(runId: string) {

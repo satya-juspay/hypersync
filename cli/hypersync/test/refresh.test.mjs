@@ -197,11 +197,72 @@ test("refresh exhausts release and main fingerprints before advancing the cursor
   await refresh({ delayMs: 0 });
 
   const fingerprintBatches = actions.filter(
-    (action) => action.action === "batch" && action.records[0]?.patchFingerprint !== undefined
+    (action) => action.action === "batch" && action.records?.[0]?.patchFingerprint !== undefined
   );
   assert.deepEqual(
     fingerprintBatches.map((action) => [action.records[0].id, action.records[0].kind]),
     [["7704", "release"], ["6262", "main"], ["7705", "main"]]
   );
+  assert.deepEqual(
+    actions
+      .filter((action) => action.action === "fingerprint-failed")
+      .map(({ id, kind }) => [id, kind]),
+    [["6648", "main"]]
+  );
+  assert.equal(actions.at(-1).action, "finish");
+});
+
+test("refresh does not request diffs for PRs previously marked with Bitbucket HTTP 500", async () => {
+  process.env.HYPERSYNC_URL = "https://hypersync.example.test";
+  process.env.HYPERSYNC_IMPORT_TOKEN = "import-test";
+  process.env.BITBUCKET_TOKEN = "bitbucket-test";
+  const actions = [];
+  const diffRequests = [];
+
+  globalThis.fetch = async (url, options) => {
+    const target = String(url);
+    if (target.endsWith("/api/import")) {
+      const body = JSON.parse(options.body);
+      actions.push(body);
+      if (body.action === "start") {
+        return Response.json({
+          since: "2026-09-25T00:00:00.000Z",
+          fingerprintFailures: { release: [], main: ["6648"] },
+        });
+      }
+      if (body.action === "pending") {
+        return Response.json({ success: true, records: [] });
+      }
+      if (body.action === "finish") {
+        return Response.json({ lastSynced: "2026-09-26T00:00:00.000Z" });
+      }
+      return Response.json({ success: true });
+    }
+
+    if (target.endsWith(".diff")) {
+      diffRequests.push(target);
+      return new Response("should not be requested", { status: 500 });
+    }
+
+    const query = new URL(target).searchParams;
+    if (query.get("state") === "MERGED" || query.get("at") === "refs/heads/master") {
+      return Response.json({ values: [], isLastPage: true });
+    }
+    return Response.json({
+      values: [{
+        id: 6648,
+        state: "OPEN",
+        title: "main",
+        updatedDate: Date.parse("2026-09-26"),
+        toRef: { displayId: "main" },
+        fromRef: { displayId: "devqa-HYPSDK-123" },
+      }],
+      isLastPage: true,
+    });
+  };
+
+  await refresh({ delayMs: 0 });
+
+  assert.deepEqual(diffRequests, []);
   assert.equal(actions.at(-1).action, "finish");
 });

@@ -94,6 +94,7 @@ ReleasePR
   releaseBranch   String
   mainPrId        String?   (PR ID of the corresponding main-branch PR)
   patchFingerprint String?
+  patchFingerprintError String? (persistent diff failure marker)
   updatedStatus   String?   (manual status, e.g. APPROVED)
   updatedBy       String?
   mergedAt        DateTime?
@@ -107,6 +108,7 @@ MainPR
   sourceBranch   String?
   status          String
   patchFingerprint String?
+  patchFingerprintError String? (persistent diff failure marker)
   mergedAt        DateTime?
   createdAt       DateTime
 

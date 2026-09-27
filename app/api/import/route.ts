@@ -5,6 +5,7 @@ import {
   finishImport,
   importBatch,
   ImportConflict,
+  markFingerprintFailed,
   pendingFingerprints,
   releaseImport,
   renewImport,
@@ -31,6 +32,7 @@ export async function POST(request: Request) {
     records?: ImportedPR[];
     limit?: number;
     kind?: "release" | "main";
+    id?: string;
     excludeIds?: string[];
   };
   try {
@@ -73,6 +75,12 @@ export async function POST(request: Request) {
             body.excludeIds
           ),
         };
+        break;
+      case "fingerprint-failed":
+        if (!body.kind || !["release", "main"].includes(body.kind)) throw new Error("Invalid fingerprint kind");
+        if (typeof body.id !== "string" || !/^[0-9]+$/.test(body.id)) throw new Error("Invalid fingerprint PR ID");
+        await markFingerprintFailed(body.runId, body.kind, body.id);
+        result = {};
         break;
       case "release":
         await releaseImport(body.runId);

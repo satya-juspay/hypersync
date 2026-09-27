@@ -42,7 +42,8 @@ legacy fingerprints while refresh replaces them with the compact format.
 Only one refresh can hold the database lease at a time. If the process dies,
 the lease expires after five minutes. Oversized fingerprints and per-PR
 Bitbucket 404/5xx failures are reported and skipped so the remaining PRs can
-continue.
+continue. A PR whose diff endpoint returns HTTP 500 is marked in PostgreSQL and
+excluded from future fingerprint attempts.
 
 The unscoped npm name `hypersync` is already taken. The package name
 `hypersync-office-cli` was unregistered when this package was prepared; verify
