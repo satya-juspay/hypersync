@@ -21,7 +21,7 @@ export function Navbar({
 
   return (
     <header className="sticky top-0 z-50 border-b border-blue-100 bg-white/90 backdrop-blur-md">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
+      <div className="relative mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
         <div className="flex items-center gap-3">
           {backHref && (
             <Link
@@ -42,6 +42,24 @@ export function Navbar({
               priority
             />
           </Link>
+          <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold tracking-wide text-blue-700">
+            2026
+          </span>
+        </div>
+
+        <div className="absolute left-1/2 hidden -translate-x-1/2 items-center overflow-visible rounded-lg border border-blue-100 bg-white p-0.5 text-xs font-semibold shadow-sm sm:flex">
+          <span className="rounded-md bg-blue-600 px-2.5 py-1 text-white">
+            hyper-widget
+          </span>
+          <span className="group relative ml-0.5 cursor-not-allowed rounded-md px-2.5 py-1 text-blue-300" aria-disabled="true">
+            ui-components
+            <span
+              role="tooltip"
+              className="pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max -translate-x-1/2 rounded-md bg-blue-950 px-2 py-1 text-[11px] font-medium text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100"
+            >
+              Releasing soon
+            </span>
+          </span>
         </div>
 
         <div className="flex items-center gap-3">
