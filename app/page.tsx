@@ -147,7 +147,7 @@ export default function Home() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#f0f4ff]">
+    <div className="min-h-screen bg-background">
       <Navbar lastSyncedAt={syncStatus.lastSyncedAt} />
 
       <main className="mx-auto max-w-7xl px-6 py-4 space-y-4">
@@ -169,7 +169,7 @@ export default function Home() {
             infoId="total-release-prs-info"
             infoText="All merged release-branch PRs currently tracked by hyperSync."
             icon={<TrendingUp className="h-4 w-4 text-blue-400" />}
-            cardClassName="border-blue-100 bg-white"
+            cardClassName="border-blue-100 bg-surface"
             labelClassName="text-blue-500"
             valueClassName="text-blue-900"
             activeClassName="ring-blue-400"
@@ -221,7 +221,7 @@ export default function Home() {
         </div>
 
         {/* SECTION 3 — RISK LEADERBOARD */}
-        <div className="rounded-xl border border-blue-100 bg-white shadow-sm">
+        <div className="rounded-xl border border-blue-100 bg-surface shadow-sm">
           <div className="border-b border-blue-50 bg-blue-50/60 px-5 py-3">
             <h2 className="text-sm font-semibold text-blue-800">
               🏆 Top Risk Contributors — Unsynced PRs
@@ -268,7 +268,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-blue-100 bg-white shadow-sm">
+        <div className="rounded-xl border border-blue-100 bg-surface shadow-sm">
           <div className="border-b border-blue-50 bg-blue-50/60 px-5 py-3">
             <h2 className="text-sm font-semibold text-blue-800">
               Top Release Branches — Unsynced PRs
@@ -332,7 +332,7 @@ export default function Home() {
                 });
               }}
               placeholder="Search by PR ID, title, author, branch…"
-              className="w-full rounded-lg border border-blue-200 bg-white py-2 pl-9 pr-4 text-sm text-blue-900 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              className="w-full rounded-lg border border-blue-200 bg-surface py-2 pl-9 pr-4 text-sm text-blue-900 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
             />
             </div>
             <div className="flex shrink-0 items-center gap-3">
@@ -340,7 +340,7 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => setFiltersOpen((open) => !open)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-surface px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50"
               >
                 <Filter className="h-3.5 w-3.5" />
                 Filters
@@ -351,7 +351,7 @@ export default function Home() {
                 )}
               </button>
               {filtersOpen && (
-                <div className="absolute right-0 top-full z-30 mt-2 w-72 rounded-lg border border-blue-100 bg-white p-4 shadow-xl">
+                <div className="absolute right-0 top-full z-30 mt-2 w-72 rounded-lg border border-blue-100 bg-surface p-4 shadow-xl">
                   <div className="mb-3 flex items-center justify-between">
                     <span className="text-sm font-semibold text-blue-900">
                       Filters
@@ -427,7 +427,7 @@ export default function Home() {
                                   };
                                 });
                               }}
-                              className="h-4 w-4 rounded border-blue-300 accent-blue-600"
+                              className="h-4 w-4 rounded border-blue-300 accent-primary"
                             />
                             {status.label}
                           </label>
@@ -451,7 +451,7 @@ export default function Home() {
                               currentPage: 1,
                             });
                           }}
-                          className="min-w-0 flex-1 rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-medium text-blue-900 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                          className="min-w-0 flex-1 rounded-lg border border-blue-200 bg-surface px-3 py-2 text-sm font-medium text-blue-900 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
                         >
                           {SORT_OPTIONS.map((option) => (
                             <option key={option.value} value={option.value}>
@@ -473,7 +473,7 @@ export default function Home() {
                               ? "Sorted ascending"
                               : "Sorted descending"
                           }
-                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-blue-200 bg-white text-blue-600 shadow-sm transition hover:bg-blue-50"
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-blue-200 bg-surface text-blue-600 shadow-sm transition hover:bg-blue-50"
                         >
                           {sortDirection === "asc" ? (
                             <ArrowUp className="h-4 w-4" />
@@ -497,7 +497,7 @@ export default function Home() {
                     currentPage: 1,
                   });
                 }}
-                className="rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-xs font-semibold text-blue-800 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                className="rounded-lg border border-blue-200 bg-surface px-2 py-1.5 text-xs font-semibold text-blue-800 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
               >
                 {PAGE_SIZES.map((size) => (
                   <option key={size} value={size}>
@@ -546,7 +546,7 @@ export default function Home() {
         </div>
 
         {/* SECTION 5 — MASTER DATA TABLE */}
-        <div className="overflow-hidden rounded-xl border border-blue-100 bg-white shadow-sm">
+        <div className="overflow-hidden rounded-xl border border-blue-100 bg-surface shadow-sm">
           {loading && data.length === 0 ? (
             <div className="py-16 text-center text-sm text-blue-400">
               <RefreshCw className="mx-auto mb-2 h-5 w-5 animate-spin" />
@@ -656,7 +656,7 @@ export default function Home() {
                   }
                   disabled={activePage === 1}
                   title="Previous page"
-                  className="rounded-lg border border-blue-100 bg-white p-1.5 text-blue-500 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-lg border border-blue-100 bg-surface p-1.5 text-blue-500 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </button>
@@ -669,7 +669,7 @@ export default function Home() {
                   }
                   disabled={activePage === totalPages}
                   title="Next page"
-                  className="rounded-lg border border-blue-100 bg-white p-1.5 text-blue-500 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-lg border border-blue-100 bg-surface p-1.5 text-blue-500 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <ChevronRight className="h-4 w-4" />
                 </button>
@@ -758,7 +758,7 @@ function ActiveFilterChip({
   onRemove: () => void;
 }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs font-medium text-blue-700 shadow-sm">
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-surface px-2.5 py-1 text-xs font-medium text-blue-700 shadow-sm">
       {label}
       <button
         type="button"
@@ -797,7 +797,7 @@ function SummaryInfo({ id, text }: { id: string; text: string }) {
 function InitialSyncLoading() {
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-blue-100 bg-white p-8 shadow-sm">
+      <div className="rounded-xl border border-blue-100 bg-surface p-8 shadow-sm">
         <div className="flex flex-col items-center justify-center py-8 text-center">
           <RefreshCw className="mb-4 h-8 w-8 animate-spin text-blue-500" />
           <h1 className="text-lg font-semibold text-blue-900">
@@ -813,7 +813,7 @@ function InitialSyncLoading() {
         {Array.from({ length: 4 }).map((_, index) => (
           <div
             key={index}
-            className="h-28 animate-pulse rounded-xl border border-blue-100 bg-white p-5 shadow-sm"
+            className="h-28 animate-pulse rounded-xl border border-blue-100 bg-surface p-5 shadow-sm"
           >
             <div className="h-4 w-28 rounded bg-blue-100" />
             <div className="mt-5 h-9 w-16 rounded bg-blue-100" />
@@ -821,7 +821,7 @@ function InitialSyncLoading() {
         ))}
       </div>
 
-      <div className="rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
+      <div className="rounded-xl border border-blue-100 bg-surface p-5 shadow-sm">
         <div className="mb-4 h-4 w-48 animate-pulse rounded bg-blue-100" />
         <div className="space-y-3">
           {Array.from({ length: 6 }).map((_, index) => (

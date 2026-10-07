@@ -66,7 +66,7 @@ export function EditPRButton({
           setMainPrId(currentMainPrId ?? "");
           setOpen(true);
         }}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-surface px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50"
       >
         <Pencil className="h-3.5 w-3.5" />
         Edit
@@ -78,7 +78,7 @@ export function EditPRButton({
           onClick={() => setOpen(false)}
         >
           <div
-            className="relative z-50 w-full max-w-sm rounded-xl border border-blue-100 bg-white p-6 shadow-xl"
+            className="relative z-50 w-full max-w-sm rounded-xl border border-blue-100 bg-surface p-6 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
@@ -104,13 +104,13 @@ export function EditPRButton({
                   value={mainPrId}
                   onChange={(e) => setMainPrId(e.target.value)}
                   placeholder="e.g. 4821"
-                  className="flex-1 rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm text-blue-900 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  className="flex-1 rounded-lg border border-blue-200 bg-surface px-3 py-2 text-sm text-blue-900 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
                 />
                 <button
                   type="button"
                   onClick={handleSaveMainPr}
                   disabled={saving}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-primary-hover disabled:opacity-50"
                 >
                   {saving ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />

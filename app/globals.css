@@ -1,26 +1,90 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
+  color-scheme: light;
+  --background: #f0f4ff;
   --foreground: #171717;
+  --surface: #ffffff;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #1c171b;
+  --foreground: #f5e8eb;
+  --surface: #292126;
+  --primary: #a8405c;
+  --primary-hover: #b64d69;
+
+  /* Existing blue utilities become warm neutrals and rose accents. */
+  --color-blue-50: #33262e;
+  --color-blue-100: #45313b;
+  --color-blue-200: #69444f;
+  --color-blue-300: #8b6471;
+  --color-blue-400: #b68d99;
+  --color-blue-500: #caa8b2;
+  --color-blue-600: #e0a8b8;
+  --color-blue-700: #e9bcc7;
+  --color-blue-800: #f1d2d8;
+  --color-blue-900: #fae8e9;
+  --color-blue-950: #1a1419;
+
+  --color-slate-50: #2e272c;
+  --color-slate-100: #41343b;
+  --color-slate-200: #66515c;
+  --color-slate-300: #927d88;
+  --color-slate-400: #b9a6af;
+  --color-slate-500: #c7b3bc;
+  --color-slate-600: #d5c3cb;
+  --color-slate-800: #f0e5e8;
+  --color-slate-900: #20191e;
+
+  --color-red-50: #3c2229;
+  --color-red-100: #58303a;
+  --color-red-200: #7d414e;
+  --color-red-400: #e9788a;
+  --color-red-500: #ef8594;
+  --color-red-600: #f39aa6;
+  --color-red-700: #fac2c8;
+
+  --color-orange-100: #4b3128;
+  --color-orange-500: #eb9e69;
+  --color-orange-700: #ffc18d;
+
+  --color-emerald-50: #1c3732;
+  --color-emerald-100: #285044;
+  --color-emerald-200: #3c6b5a;
+  --color-emerald-400: #60be9b;
+  --color-emerald-500: #78d2ac;
+  --color-emerald-600: #9ce2c0;
+  --color-emerald-700: #b9ebd1;
+
+  --color-teal-50: #1c3535;
+  --color-teal-100: #274949;
+  --color-teal-200: #3d6867;
+  --color-teal-400: #61b8b4;
+  --color-teal-500: #78ccc6;
+  --color-teal-600: #9cddd5;
+  --color-teal-700: #beebe4;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+:root[data-theme="dark"] .wordmark {
+  filter: brightness(0) invert(0.9) sepia(0.12) saturate(1.8);
 }

@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowLeft, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ShieldCheck, SunMoon } from "lucide-react";
 import { SignInButton, UserButton, useAuth } from "@clerk/nextjs";
 
 const adminAccessCache = new Map<string, boolean>();
+type ThemePreference = "system" | "light" | "dark";
 
 interface NavbarProps {
   backHref?: string;
@@ -20,13 +21,13 @@ export function Navbar({
   const { isSignedIn, isLoaded, userId } = useAuth();
 
   return (
-    <header className="sticky top-0 z-50 border-b border-blue-100 bg-white/90 backdrop-blur-md">
-      <div className="relative mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
+    <header className="sticky top-0 z-50 border-b border-blue-100 bg-surface/90 backdrop-blur-md">
+      <div className="relative mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-y-2 px-3 py-3 sm:px-6">
         <div className="flex items-center gap-3">
           {backHref && (
             <Link
               href={backHref}
-              className="rounded-lg border border-blue-100 bg-white p-1.5 text-blue-400 shadow-sm transition hover:bg-blue-50 hover:text-blue-600"
+              className="rounded-lg border border-blue-100 bg-surface p-1.5 text-blue-400 shadow-sm transition hover:bg-blue-50 hover:text-blue-600"
               title="Back to dashboard"
             >
               <ArrowLeft className="h-4 w-4" />
@@ -38,17 +39,17 @@ export function Navbar({
               alt="hyperSync"
               width={168}
               height={40}
-              className="h-9 w-auto"
+              className="wordmark h-7 w-auto sm:h-9"
               priority
             />
           </Link>
-          <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold tracking-wide text-blue-700">
+          <span className="hidden rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold tracking-wide text-blue-700 sm:inline-flex">
             2026
           </span>
         </div>
 
-        <div className="absolute left-1/2 hidden -translate-x-1/2 items-center overflow-visible rounded-lg border border-blue-100 bg-white p-0.5 text-xs font-semibold shadow-sm sm:flex">
-          <span className="rounded-md bg-blue-600 px-2.5 py-1 text-white">
+        <div className="absolute left-1/2 hidden -translate-x-1/2 items-center overflow-visible rounded-lg border border-blue-100 bg-surface p-0.5 text-xs font-semibold shadow-sm lg:flex">
+          <span className="rounded-md bg-primary px-2.5 py-1 text-white">
             hyper-widget
           </span>
           <span className="group relative ml-0.5 cursor-not-allowed rounded-md px-2.5 py-1 text-blue-300" aria-disabled="true">
@@ -62,28 +63,97 @@ export function Navbar({
           </span>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-2 sm:gap-3">
           {isLoaded && isSignedIn && (
             <AdminNavLink userId={userId ?? "signed-in"} />
           )}
-          <span className="text-xs font-medium text-blue-500">
+          <span className="hidden text-xs font-medium text-blue-500 xl:inline">
             Last sync:{" "}
             <span className="text-blue-800">{formatLastSyncedAt(lastSyncedAt)}</span>
           </span>
+          <ThemeSelect />
           {isLoaded && (
             isSignedIn ? (
               <UserButton />
             ) : (
               <SignInButton mode="modal">
-                <button className="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50">
+                <button className="rounded-lg border border-blue-200 bg-surface px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50">
                   Sign in
                 </button>
               </SignInButton>
             )
           )}
         </div>
+        <span className="w-full text-right text-xs font-medium text-blue-500 xl:hidden">
+          Last sync:{" "}
+          <span className="text-blue-800">{formatLastSyncedAt(lastSyncedAt)}</span>
+        </span>
       </div>
     </header>
+  );
+}
+
+function ThemeSelect() {
+  const selectRef = useRef<HTMLSelectElement>(null);
+  const preferenceRef = useRef<ThemePreference>("system");
+
+  useEffect(() => {
+    let savedPreference: string | null = null;
+    try {
+      savedPreference = localStorage.getItem("hypersync-theme");
+    } catch {}
+
+    const preference: ThemePreference =
+      savedPreference === "light" || savedPreference === "dark"
+        ? savedPreference
+        : "system";
+    preferenceRef.current = preference;
+    if (selectRef.current) selectRef.current.value = preference;
+
+    const colorScheme = window.matchMedia("(prefers-color-scheme: dark)");
+    const followBrowser = () => {
+      if (preferenceRef.current === "system") {
+        document.documentElement.dataset.theme = colorScheme.matches
+          ? "dark"
+          : "light";
+      }
+    };
+
+    followBrowser();
+    colorScheme.addEventListener("change", followBrowser);
+    return () => colorScheme.removeEventListener("change", followBrowser);
+  }, []);
+
+  function handleChange(event: React.ChangeEvent<HTMLSelectElement>) {
+    const preference = event.currentTarget.value as ThemePreference;
+    preferenceRef.current = preference;
+    document.documentElement.dataset.theme =
+      preference === "system"
+        ? window.matchMedia("(prefers-color-scheme: dark)").matches
+          ? "dark"
+          : "light"
+        : preference;
+    try {
+      localStorage.setItem("hypersync-theme", preference);
+    } catch {}
+  }
+
+  return (
+    <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-blue-200 bg-surface text-blue-700 shadow-sm transition hover:bg-blue-50 focus-within:ring-2 focus-within:ring-blue-400">
+      <SunMoon aria-hidden="true" className="h-4 w-4" />
+      <select
+        ref={selectRef}
+        aria-label="Theme"
+        title="Theme"
+        defaultValue="system"
+        onChange={handleChange}
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+      >
+        <option value="system">Browser default</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </span>
   );
 }
 
@@ -130,7 +200,7 @@ function AdminNavLink({ userId }: { userId: string }) {
   return (
     <Link
       href="/admin"
-      className="inline-flex items-center gap-1.5 rounded-lg border border-blue-100 bg-white px-2.5 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50"
+      className="inline-flex items-center gap-1.5 rounded-lg border border-blue-100 bg-surface px-2.5 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50"
     >
       <ShieldCheck className="h-3.5 w-3.5" />
       Admin

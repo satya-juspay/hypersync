@@ -97,7 +97,7 @@ export function PatchMatchSearch({
   }
 
   return (
-    <div className="rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
+    <div className="rounded-xl border border-blue-100 bg-surface p-5 shadow-sm">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-blue-900">
@@ -111,7 +111,7 @@ export function PatchMatchSearch({
           type="button"
           onClick={() => void handleSearch()}
           disabled={loading}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-surface px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loading ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -188,7 +188,7 @@ export function PatchMatchSearch({
                         savingMainPrId !== null ||
                         currentMainPrId === match.mainPrId
                       }
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-surface px-2.5 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {savingMainPrId === match.mainPrId ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />

@@ -1,7 +1,7 @@
 export default function AdminLoading() {
   return (
-    <div className="min-h-screen bg-[#f0f4ff]">
-      <div className="sticky top-0 z-50 h-[57px] border-b border-blue-100 bg-white/90" />
+    <div className="min-h-screen bg-background">
+      <div className="sticky top-0 z-50 h-[57px] border-b border-blue-100 bg-surface/90" />
 
       <main className="mx-auto max-w-5xl space-y-5 px-6 py-5">
         <div className="flex animate-pulse items-center gap-3">
@@ -12,12 +12,12 @@ export default function AdminLoading() {
           </div>
         </div>
 
-        <div className="animate-pulse rounded-lg border border-blue-100 bg-white p-5 shadow-sm">
+        <div className="animate-pulse rounded-lg border border-blue-100 bg-surface p-5 shadow-sm">
           <div className="mb-4 h-5 w-32 rounded bg-blue-100" />
           <div className="h-11 w-full rounded-lg bg-blue-100" />
         </div>
 
-        <div className="animate-pulse rounded-lg border border-blue-100 bg-white p-5 shadow-sm">
+        <div className="animate-pulse rounded-lg border border-blue-100 bg-surface p-5 shadow-sm">
           <div className="mb-4 h-5 w-24 rounded bg-blue-100" />
           <div className="mb-4 h-10 w-full rounded-lg bg-blue-100" />
           <div className="space-y-2">

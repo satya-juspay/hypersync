@@ -56,7 +56,7 @@ function MetaCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-blue-100 bg-white p-4 shadow-sm">
+    <div className="rounded-xl border border-blue-100 bg-surface p-4 shadow-sm">
       <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-blue-400">
         {icon}
         {label}
@@ -150,10 +150,10 @@ export default function PRDetailPage() {
 
   if (!pr) {
     return (
-      <div className="min-h-screen bg-[#f0f4ff]">
+      <div className="min-h-screen bg-background">
         <Navbar backHref="/" lastSyncedAt={lastSyncedAt} />
         <main className="mx-auto max-w-5xl px-6 py-5">
-          <div className="rounded-lg border border-blue-100 bg-white p-6 text-sm font-medium text-blue-900 shadow-sm">
+          <div className="rounded-lg border border-blue-100 bg-surface p-6 text-sm font-medium text-blue-900 shadow-sm">
             {error ?? `PR #${id} was not found in the current sync data.`}
           </div>
         </main>
@@ -162,7 +162,7 @@ export default function PRDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f0f4ff]">
+    <div className="min-h-screen bg-background">
       <Navbar backHref="/" lastSyncedAt={lastSyncedAt} />
 
       <main className="mx-auto max-w-5xl space-y-5 px-6 py-5">
@@ -172,7 +172,7 @@ export default function PRDetailPage() {
           </div>
         )}
 
-        <div className="rounded-xl border border-blue-100 bg-white p-6 shadow-sm">
+        <div className="rounded-xl border border-blue-100 bg-surface p-6 shadow-sm">
           <div className="mb-3 flex flex-wrap items-center gap-3">
             <StatusBadge status={pr.syncStatus} />
             <a
@@ -255,10 +255,10 @@ export default function PRDetailPage() {
 
 function PRDetailLoadingView() {
   return (
-    <div className="min-h-screen bg-[#f0f4ff]">
+    <div className="min-h-screen bg-background">
       <Navbar backHref="/" />
       <main className="mx-auto max-w-5xl space-y-5 px-6 py-5">
-        <div className="animate-pulse rounded-xl border border-blue-100 bg-white p-6 shadow-sm">
+        <div className="animate-pulse rounded-xl border border-blue-100 bg-surface p-6 shadow-sm">
           <div className="mb-4 flex gap-3">
             <div className="h-6 w-24 rounded-full bg-blue-100" />
             <div className="h-6 w-16 rounded bg-blue-100" />
@@ -269,14 +269,14 @@ function PRDetailLoadingView() {
           {Array.from({ length: 5 }).map((_, index) => (
             <div
               key={index}
-              className="animate-pulse rounded-xl border border-blue-100 bg-white p-4 shadow-sm"
+              className="animate-pulse rounded-xl border border-blue-100 bg-surface p-4 shadow-sm"
             >
               <div className="mb-3 h-3 w-24 rounded bg-blue-100" />
               <div className="h-5 w-2/3 rounded bg-blue-100" />
             </div>
           ))}
         </div>
-        <div className="rounded-xl border border-blue-100 bg-white p-5 text-center text-sm text-blue-500 shadow-sm">
+        <div className="rounded-xl border border-blue-100 bg-surface p-5 text-center text-sm text-blue-500 shadow-sm">
           <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" />
           Loading PR data
         </div>

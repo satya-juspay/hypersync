@@ -92,7 +92,7 @@ export function AdminManager({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-blue-100 bg-white p-5 shadow-sm">
+      <div className="rounded-lg border border-blue-100 bg-surface p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
           <Crown className="h-4 w-4 text-blue-500" />
           <h2 className="text-sm font-semibold text-blue-900">Super Admin</h2>
@@ -102,7 +102,7 @@ export function AdminManager({
         </div>
       </div>
 
-      <div className="rounded-lg border border-blue-100 bg-white p-5 shadow-sm">
+      <div className="rounded-lg border border-blue-100 bg-surface p-5 shadow-sm">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <ShieldCheck className="h-4 w-4 text-blue-500" />
@@ -119,12 +119,12 @@ export function AdminManager({
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             placeholder="person@juspay.in"
-            className="min-w-0 flex-1 rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm text-blue-900 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            className="min-w-0 flex-1 rounded-lg border border-blue-200 bg-surface px-3 py-2 text-sm text-blue-900 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
           />
           <button
             type="submit"
             disabled={saving || !email.trim()}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />

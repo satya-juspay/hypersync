@@ -74,10 +74,10 @@ export default function AdminPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#f0f4ff]">
+      <div className="min-h-screen bg-background">
         <Navbar backHref="/" />
         <main className="mx-auto max-w-5xl px-6 py-5">
-          <div className="rounded-lg border border-blue-100 bg-white p-6 text-center text-sm font-medium text-blue-900 shadow-sm">
+          <div className="rounded-lg border border-blue-100 bg-surface p-6 text-center text-sm font-medium text-blue-900 shadow-sm">
             <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-blue-500" />
             Loading admin access
           </div>
@@ -100,12 +100,12 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f0f4ff]">
+    <div className="min-h-screen bg-background">
       <Navbar backHref="/" />
 
       <main className="mx-auto max-w-5xl space-y-5 px-6 py-5">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-blue-100 bg-white text-blue-600 shadow-sm">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-blue-100 bg-surface text-blue-600 shadow-sm">
             <ShieldCheck className="h-5 w-5" />
           </div>
           <div>
@@ -126,10 +126,10 @@ export default function AdminPage() {
 
 function AccessState({ title }: { title: string }) {
   return (
-    <div className="min-h-screen bg-[#f0f4ff]">
+    <div className="min-h-screen bg-background">
       <Navbar backHref="/" />
       <main className="mx-auto max-w-5xl px-6 py-5">
-        <div className="rounded-lg border border-blue-100 bg-white p-6 text-sm font-medium text-blue-900 shadow-sm">
+        <div className="rounded-lg border border-blue-100 bg-surface p-6 text-sm font-medium text-blue-900 shadow-sm">
           {title}
         </div>
       </main>
