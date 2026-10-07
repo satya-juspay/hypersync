@@ -199,6 +199,29 @@ each patch score. Version dependencies appear without custom release commits.
 Diff HTTP 500 failures are persisted and skipped in later refreshes; truncated
 or otherwise unavailable diffs stay visibly unavailable.
 
+Its list uses the same filter toolbar as hyper-widget: search, a **Filters**
+panel with multi-select statuses (all selected initially), author and release
+branch selectors, sorting in either direction, and 10/50/100 rows per page.
+Active filters appear as removable chips. Summary tiles select status presets;
+clicking an author or release branch filters the list and restores all statuses.
+Filtering and sorting happen on the published dataset without changing the DB.
+
+The commit author (matched by email), an admin, or the super admin can use
+**Review commit** to confirm an imported main PR or mark the commit manually
+approved. A confirmed link follows the main PR's actual status; approval is
+shown separately and does not claim the PR was merged. Both can be undone.
+Reviewer email and time are displayed. Decisions are stored by commit SHA in
+the isolated `UiComponentCommitReview` table and survive subsequent refreshes,
+including when one commit is used by multiple release branches. If a confirmed
+PR's source SHA changes or it disappears from the latest import, its link needs
+review again. Confirming another PR replaces manual approval.
+
+Apply the additive `20261007000001_ui_component_commit_reviews` migration with
+`npx prisma migrate deploy`, then restart/redeploy the app to enable reviews.
+The migration does not alter existing hyper-widget tables. Until it is applied,
+the read-only UI Components dashboard still works and review controls remain
+disabled. No Bitbucket calls or office-network access are needed to save reviews.
+
 Only one CLI import may run at a time. Its five-minute lease is renewed during
 the run and expires after a crash. Dashboard reads continue during imports.
 

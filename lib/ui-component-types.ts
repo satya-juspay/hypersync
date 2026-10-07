@@ -19,12 +19,12 @@ export type UiComponentMainPrInput = UiComponentFingerprint & {
 };
 
 export type UiComponentCommitAnalysisInput = UiComponentFingerprint & { commitSha: string };
-export type UiComponentMatchStatus = "MERGED" | "OPEN_PR" | "NEEDS_REVIEW" | "UNMATCHED" | "UNAVAILABLE";
+export type UiComponentMatchStatus = "MERGED" | "OPEN_PR" | "APPROVED" | "NEEDS_REVIEW" | "UNMATCHED" | "UNAVAILABLE";
 export type UiComponentMatch = {
   prId: number;
   title: string;
   state: UiComponentMainPrInput["state"];
-  reason: "exact-commit" | "patch-similarity";
+  reason: "exact-commit" | "patch-similarity" | "manual-confirmation";
   score: number | null;
   matchedFiles: number;
   totalFiles: number;
@@ -34,16 +34,37 @@ export type UiComponentMatch = {
   totalRemovedLines: number;
 };
 
+export type UiComponentReview = {
+  mainPrId: number | null;
+  approved: boolean;
+  updatedBy: string;
+  updatedAt: string;
+};
+
+export type UiComponentReviewAccess = {
+  email: string | null;
+  isAuthenticated: boolean;
+  canEditAnyPR: boolean;
+};
+
+export type UiComponentReviewRequest = { runId: string } & (
+  | { action: "confirm"; mainPrId: number }
+  | { action: "approve" | "unapprove" | "clear-match" }
+);
+
 export type UiComponentDashboardCommit = {
   sha: string;
   message: string;
   authorName: string;
+  authorEmail: string | null;
   authorTimestamp: string | null;
   branches: string[];
   fingerprintStatus: UiComponentFingerprint["fingerprintStatus"] | "NOT_ANALYZED";
   fingerprintError: string | null;
   matchStatus: UiComponentMatchStatus;
   matches: UiComponentMatch[];
+  review: UiComponentReview | null;
+  reviewWarning: string | null;
 };
 
 export type UiComponentDashboardBranch = {
@@ -67,6 +88,7 @@ export type UiComponentDashboard = {
   analysisVersion: number;
   mainPrCount: number;
   mainPrFingerprintUnavailable: number;
+  reviewsAvailable: boolean;
   branches: UiComponentDashboardBranch[];
   commits: UiComponentDashboardCommit[];
 };

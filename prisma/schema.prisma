@@ -122,6 +122,7 @@ model UiComponentReleaseCommit {
   createdAt       DateTime                    @default(now())
   snapshots       UiComponentSnapshotCommit[]
   analyses        UiComponentCommitAnalysis[]
+  review          UiComponentCommitReview?
 }
 
 model UiComponentSnapshotCommit {
@@ -171,4 +172,15 @@ model UiComponentCommitAnalysis {
 model UiComponentDiffFailure {
   key       String   @id
   createdAt DateTime @default(now())
+}
+
+// Human decisions belong to immutable commits, not disposable refresh runs.
+model UiComponentCommitReview {
+  commitSha          String                   @id
+  mainPrId           Int?
+  confirmedSourceSha String?
+  approved           Boolean                  @default(false)
+  updatedBy          String
+  updatedAt          DateTime                 @updatedAt
+  commit             UiComponentReleaseCommit @relation(fields: [commitSha], references: [sha], onDelete: Restrict)
 }

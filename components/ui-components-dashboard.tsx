@@ -1,17 +1,21 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, ExternalLink, GitBranch, GitCommitHorizontal, Info, LoaderCircle, RefreshCw, Search } from "lucide-react";
+import { useAuth } from "@clerk/nextjs";
+import { AlertCircle, ChevronLeft, ChevronRight, ExternalLink, GitBranch, GitCommitHorizontal, LoaderCircle, RefreshCw } from "lucide-react";
 import { Navbar } from "@/components/navbar";
-import type { UiComponentDashboard, UiComponentDashboardCommit, UiComponentMatchStatus } from "@/lib/ui-component-types";
+import { SummaryInfo } from "@/components/summary-info";
+import { UiComponentReviewControls } from "@/components/ui-component-review-controls";
+import { UiComponentListFilters } from "@/components/ui-component-list-filters";
+import { canReviewUiComponentCommit } from "@/lib/ui-component-review";
+import { filterUiComponentCommits, initialUiComponentListView, sameUiComponentStatuses, UI_COMPONENT_STATUSES, UI_COMPONENT_STATUS_LABELS as statusLabels, type UiComponentListView } from "@/lib/ui-component-filters";
+import type { UiComponentDashboard, UiComponentDashboardCommit, UiComponentMatchStatus, UiComponentReviewAccess } from "@/lib/ui-component-types";
 
-const statusLabels: Record<UiComponentMatchStatus, string> = {
-  MERGED: "Merged to main", OPEN_PR: "Open main PR", NEEDS_REVIEW: "Needs review", UNMATCHED: "No match", UNAVAILABLE: "Analysis unavailable",
-};
 const statusColors: Record<UiComponentMatchStatus, string> = {
   MERGED: "bg-emerald-50 text-emerald-700 border-emerald-200", OPEN_PR: "bg-blue-50 text-blue-700 border-blue-200",
   NEEDS_REVIEW: "bg-orange-100 text-orange-700 border-orange-100", UNMATCHED: "bg-red-50 text-red-700 border-red-200",
   UNAVAILABLE: "bg-slate-50 text-slate-600 border-slate-200",
+  APPROVED: "bg-emerald-50 text-emerald-700 border-emerald-200",
 };
 const bitbucketBase = (process.env.NEXT_PUBLIC_BITBUCKET_BASE_URL || "https://bitbucket.juspay.net").replace(/\/+$/, "");
 const project = process.env.NEXT_PUBLIC_BITBUCKET_PROJECT_KEY || "PICAF";
@@ -25,13 +29,25 @@ async function loadDashboard(signal?: AbortSignal): Promise<UiComponentDashboard
 }
 
 export function UiComponentsDashboard() {
+  const { isLoaded, userId } = useAuth();
+  const [access, setAccess] = useState<(UiComponentReviewAccess & { userId: string }) | null>(null);
   const [data, setData] = useState<UiComponentDashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [branch, setBranch] = useState("");
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState<UiComponentMatchStatus | "ALL">("ALL");
-  const [page, setPage] = useState(1);
+  const [view, setView] = useState(initialUiComponentListView);
+  const { branch, statuses, page, pageSize } = view;
+
+  function updateView(patch: Partial<UiComponentListView>) {
+    setView((current) => ({ ...current, ...patch, page: 1 }));
+  }
+
+  function applyBranchFilter(value: string) {
+    updateView({ branch: value, statuses: [...UI_COMPONENT_STATUSES] });
+  }
+
+  function applyAuthorFilter(value: string) {
+    updateView({ author: value, statuses: [...UI_COMPONENT_STATUSES] });
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -41,6 +57,23 @@ export function UiComponentsDashboard() {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    if (!isLoaded || !userId) return;
+    const controller = new AbortController();
+    fetch("/api/admins/me", { cache: "no-store", signal: controller.signal }).then(async (response) => {
+      const result = await response.json();
+      if (!response.ok || !result.success || !result.access) throw new Error("Could not load review access");
+      if (!controller.signal.aborted) setAccess({ ...result.access, userId });
+    }).catch(() => { if (!controller.signal.aborted) setAccess(null); });
+    return () => controller.abort();
+  }, [isLoaded, userId]);
+
+  const reviewAccess = isLoaded && userId === access?.userId ? access : null;
+
+  async function reloadAfterReview() {
+    setData(await loadDashboard());
+  }
+
   async function reload() {
     setLoading(true);
     setError(null);
@@ -49,20 +82,18 @@ export function UiComponentsDashboard() {
     finally { setLoading(false); }
   }
 
-  const filtered = useMemo(() => {
-    const search = query.trim().toLowerCase();
-    return (data?.commits ?? []).filter((commit) => (!branch || commit.branches.includes(branch)) && (status === "ALL" || commit.matchStatus === status)
-      && (!search || [commit.sha, commit.message, commit.authorName, ...commit.branches, ...commit.matches.map((match) => `#${match.prId} ${match.title}`)].some((text) => text.toLowerCase().includes(search))));
-  }, [data, branch, status, query]);
-  const pageCount = Math.max(1, Math.ceil(filtered.length / 20));
+  const filtered = useMemo(() => filterUiComponentCommits(data?.commits ?? [], view), [data, view]);
+  const authors = useMemo(() => [...new Set(data?.commits.map((commit) => commit.authorName) ?? [])].sort((a, b) => a.localeCompare(b)), [data]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, pageCount);
-  const rows = filtered.slice((currentPage - 1) * 20, currentPage * 20);
+  const rows = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const selectedBranch = data?.branches.find((item) => item.branch === branch);
   const summary = [
     { label: "Release commits", count: data?.commits.length ?? 0, status: "ALL" as const, description: "Unique custom ui-components commits across all discovered 2026 hyper-widget release branches. Jenkins commits are excluded." },
-    { label: "Merged to main", count: data?.commits.filter((commit) => commit.matchStatus === "MERGED").length ?? 0, status: "MERGED" as const, description: "The exact commit SHA appears in a merged ui-components main PR." },
-    { label: "Open main PRs", count: data?.commits.filter((commit) => commit.matchStatus === "OPEN_PR").length ?? 0, status: "OPEN_PR" as const, description: "The exact commit SHA appears in an open main PR and has no merged main PR match." },
-    { label: "Needs review", count: data?.commits.filter((commit) => commit.matchStatus === "NEEDS_REVIEW").length ?? 0, status: "NEEDS_REVIEW" as const, description: "A similar patch or a declined PR contains this work. Patch similarity is a suggestion that needs review." },
+    { label: "Merged to main", count: data?.commits.filter((commit) => commit.matchStatus === "MERGED").length ?? 0, status: "MERGED" as const, description: "The exact commit SHA appears in a merged ui-components main PR, or an author/admin has confirmed a match to a merged PR." },
+    { label: "Open main PRs", count: data?.commits.filter((commit) => commit.matchStatus === "OPEN_PR").length ?? 0, status: "OPEN_PR" as const, description: "An exact commit match or an author/admin-confirmed main PR is still open." },
+    { label: "Needs review", count: data?.commits.filter((commit) => commit.matchStatus === "NEEDS_REVIEW").length ?? 0, status: "NEEDS_REVIEW" as const, description: "A patch suggestion, declined PR or changed/missing confirmed PR needs review. The commit author or an admin can confirm a match or approve it manually." },
+    { label: "Approved", count: data?.commits.filter((commit) => commit.matchStatus === "APPROVED").length ?? 0, status: "APPROVED" as const, description: "The commit author or an admin manually approved this release commit. This does not mean a main PR was merged." },
   ];
 
   return (
@@ -91,20 +122,34 @@ export function UiComponentsDashboard() {
         </div>}
 
         {data?.runId && <>
+          {!data.reviewsAvailable && <div role="status" className="rounded-xl border border-orange-100 bg-orange-100 p-4 text-sm text-orange-700">Commit reviews are not enabled yet. Apply the latest database migrations, then reload. Existing release results remain available.</div>}
           {data.analysisVersion === 0 && <div role="status" className="rounded-xl border border-orange-100 bg-orange-100 p-4 text-sm text-orange-700">This snapshot contains dependency histories only. Run the updated <code>npm run refresh:ui-components</code> from the office network to add main PR matches.</div>}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            {summary.map((item) => <button key={item.label} onClick={() => { setStatus(item.status); setPage(1); }} aria-pressed={status === item.status}
-              className={`rounded-xl border bg-surface p-4 text-left shadow-sm transition hover:border-blue-400 ${status === item.status ? "border-blue-400 ring-1 ring-blue-200" : "border-blue-100"}`}>
-              <span className="flex items-center justify-between gap-2 text-xs font-semibold text-blue-500">{item.label}<Info aria-label={item.description} className="h-4 w-4 shrink-0"><title>{item.description}</title></Info></span>
-              <span className="mt-2 block text-3xl font-bold">{item.count}</span>
-            </button>)}
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+            {summary.map((item) => {
+              const preset = item.status === "ALL" ? UI_COMPONENT_STATUSES : [item.status];
+              const active = sameUiComponentStatuses(statuses, preset);
+              return <div key={item.label}
+              className={`relative rounded-xl border bg-surface p-4 text-left shadow-sm transition hover:border-blue-400 ${active ? "border-blue-400 ring-1 ring-blue-200" : "border-blue-100"}`}>
+              <button type="button" aria-label={`Filter by ${item.label}`} aria-pressed={active}
+                onClick={() => updateView({ statuses: [...preset] })}
+                className="absolute inset-0 z-0 cursor-pointer rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500" />
+              <div className="pointer-events-none relative z-10">
+                <span className="flex items-center justify-between gap-2 text-xs font-semibold text-blue-500">
+                  {item.label}
+                  <span className="pointer-events-auto shrink-0">
+                    <SummaryInfo id={`ui-components-${item.status.toLowerCase()}-info`} text={item.description} align="end" />
+                  </span>
+                </span>
+                <span className="mt-2 block text-3xl font-bold">{item.count}</span>
+              </div>
+            </div>; })}
           </div>
 
           <details className="rounded-xl border border-blue-100 bg-surface shadow-sm">
             <summary className="cursor-pointer px-4 py-4 text-sm font-semibold">{data.branches.length} hyper-widget release branches · {data.branches.filter((item) => item.status === "published-version").length} published versions · {data.mainPrCount} main PRs imported</summary>
             <div className="max-h-96 overflow-auto border-t border-blue-100">
               {data.branches.map((item) => <div key={item.branch} className="flex flex-wrap items-center justify-between gap-3 border-b border-blue-50 px-4 py-3 text-xs">
-                <div className="min-w-0 flex-1"><button onClick={() => { setBranch(item.branch); setStatus("ALL"); setPage(1); }} className="font-semibold text-blue-700 underline-offset-4 hover:underline">{item.branch}</button>
+                <div className="min-w-0 flex-1"><button onClick={() => applyBranchFilter(item.branch)} className="font-semibold text-blue-700 underline-offset-4 hover:underline">{item.branch}</button>
                   <p className="mt-1 break-all font-mono text-blue-500">{item.uiComponentsRef} <span className="font-sans">({item.uiComponentsRefType})</span></p>
                   <p className="mt-1 text-blue-400">Head {item.uiComponentsHeadSha.slice(0, 12)}{item.jenkinsBoundarySha ? ` · Jenkins boundary ${item.jenkinsBoundarySha.slice(0, 12)}` : ""}</p>
                   {item.uiComponentsBranches.length > 0 && <p className="mt-1 break-all text-blue-400">Containing branches: {item.uiComponentsBranches.join(", ")}</p>}
@@ -116,51 +161,49 @@ export function UiComponentsDashboard() {
             </div>
           </details>
 
-          <section aria-label="Release commit filters" className="flex flex-wrap gap-3 rounded-xl border border-blue-100 bg-surface p-4 shadow-sm">
-            <label className="relative min-w-48 flex-1"><span className="sr-only">Search commits or main PRs</span><Search className="absolute left-3 top-2.5 h-4 w-4 text-blue-400" />
-              <input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="Search commit, author or main PR…" className="w-full rounded-lg border border-blue-100 bg-background py-2 pl-9 pr-3 text-sm" />
-            </label>
-            <label><span className="sr-only">Release branch</span><select value={branch} onChange={(event) => { setBranch(event.target.value); setPage(1); }} className="max-w-full rounded-lg border border-blue-100 bg-background px-3 py-2 text-sm">
-              <option value="">All release branches</option>{data.branches.map((item) => <option key={item.branch}>{item.branch}</option>)}
-            </select></label>
-            <label><span className="sr-only">Match status</span><select value={status} onChange={(event) => { setStatus(event.target.value as typeof status); setPage(1); }} className="rounded-lg border border-blue-100 bg-background px-3 py-2 text-sm">
-              <option value="ALL">All match statuses</option>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select></label>
-          </section>
+          <UiComponentListFilters view={view} authors={authors} branches={data.branches.map((item) => item.branch)} total={filtered.length} onChange={updateView} />
 
           <section aria-label="Release commits" className="overflow-hidden rounded-xl border border-blue-100 bg-surface shadow-sm">
             <div className="border-b border-blue-100 px-4 py-3 text-sm font-semibold">{filtered.length} unique release commits{branch ? ` · ${branch}` : ""}</div>
-            {rows.map((commit) => <CommitRow key={commit.sha} commit={commit} onBranch={(value) => { setBranch(value); setStatus("ALL"); setPage(1); }} />)}
-            {!rows.length && <p className="px-4 py-10 text-center text-sm text-blue-500">{selectedBranch?.status === "published-version" ? "This branch uses a published version and has no custom release commits." : "No release commits match these filters."}</p>}
-            {filtered.length > 20 && <div className="flex items-center justify-between border-t border-blue-100 px-4 py-3 text-xs text-blue-500">
-              <button disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)} className="rounded border border-blue-100 px-3 py-1.5 disabled:opacity-40">Previous</button>
-              <span>Page {currentPage} of {pageCount}</span><button disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)} className="rounded border border-blue-100 px-3 py-1.5 disabled:opacity-40">Next</button>
+            {rows.map((commit) => <CommitRow key={commit.sha} commit={commit} runId={data.runId!} canReview={data.reviewsAvailable && canReviewUiComponentCommit(reviewAccess, commit.authorEmail)} onReviewed={reloadAfterReview} onAuthor={applyAuthorFilter} onBranch={applyBranchFilter} />)}
+            {!rows.length && <p className="px-4 py-10 text-center text-sm text-blue-500">{statuses.length === 0 ? "No statuses selected. Choose a status in Filters to show release commits." : selectedBranch?.status === "published-version" ? "This branch uses a published version and has no custom release commits." : "No release commits match these filters."}</p>}
+            {filtered.length > 0 && <div className="flex items-center justify-between border-t border-blue-50 bg-blue-50/40 px-4 py-3 text-xs text-blue-500">
+              <span>Page <strong className="text-blue-800">{currentPage}</strong> of <strong className="text-blue-800">{pageCount}</strong></span>
+              <div className="flex items-center gap-2">
+                <button type="button" aria-label="Previous page" disabled={currentPage <= 1} onClick={() => setView((current) => ({ ...current, page: currentPage - 1 }))} className="rounded-lg border border-blue-100 bg-surface p-1.5 text-blue-500 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"><ChevronLeft aria-hidden="true" className="h-4 w-4" /></button>
+                <button type="button" aria-label="Next page" disabled={currentPage >= pageCount} onClick={() => setView((current) => ({ ...current, page: currentPage + 1 }))} className="rounded-lg border border-blue-100 bg-surface p-1.5 text-blue-500 shadow-sm transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"><ChevronRight aria-hidden="true" className="h-4 w-4" /></button>
+              </div>
             </div>}
           </section>
-          <p className="text-xs leading-relaxed text-blue-400">Exact commit matches establish PR membership. Patch scores compare files and added/removed lines; even a 100% score needs review. {data.mainPrFingerprintUnavailable > 0 ? `${data.mainPrFingerprintUnavailable} main PR fingerprints are unavailable, so patch suggestions may be incomplete.` : ""}</p>
+          <p className="text-xs leading-relaxed text-blue-400">Exact commit matches establish PR membership. Patch scores compare files and added/removed lines; even a 100% score needs review. Sign in as the commit author or an admin to confirm a match or approve a commit. {data.mainPrFingerprintUnavailable > 0 ? `${data.mainPrFingerprintUnavailable} main PR fingerprints are unavailable, so patch suggestions may be incomplete.` : ""}</p>
         </>}
       </main>
     </div>
   );
 }
 
-function CommitRow({ commit, onBranch }: { commit: UiComponentDashboardCommit; onBranch: (branch: string) => void }) {
+function CommitRow({ commit, runId, canReview, onReviewed, onAuthor, onBranch }: {
+  commit: UiComponentDashboardCommit; runId: string; canReview: boolean; onReviewed: () => Promise<void>; onAuthor: (author: string) => void; onBranch: (branch: string) => void;
+}) {
   return <article className="grid gap-4 border-b border-blue-50 p-4 lg:grid-cols-2">
     <div className="min-w-0">
       <div className="flex flex-wrap items-center gap-2"><a href={`${repoUrl("ui-components")}/commits/${commit.sha}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-mono text-xs font-semibold text-blue-600"><GitCommitHorizontal className="h-4 w-4" />{commit.sha.slice(0, 12)}<ExternalLink className="h-3 w-3" /></a>
         <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${statusColors[commit.matchStatus]}`}>{statusLabels[commit.matchStatus]}</span>
       </div>
       <p className="mt-2 break-words text-sm font-semibold" title={commit.message}>{commit.message.split("\n")[0] || "Untitled commit"}</p>
-      <p className="mt-1 break-all text-xs text-blue-500">{commit.authorName}{commit.authorTimestamp ? ` · ${new Date(commit.authorTimestamp).toLocaleDateString()}` : ""}</p>
+      <p className="mt-1 break-all text-xs text-blue-500"><button type="button" onClick={() => onAuthor(commit.authorName)} aria-label={`Filter by author ${commit.authorName}`} className="text-left underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300">{commit.authorName}</button>{commit.authorTimestamp ? ` · ${new Date(commit.authorTimestamp).toLocaleDateString()}` : ""}</p>
       <div className="mt-2 flex flex-wrap gap-1">{commit.branches.map((branch) => <button key={branch} onClick={() => onBranch(branch)} className="rounded bg-blue-50 px-2 py-1 text-[11px] text-blue-600 hover:underline">{branch}</button>)}</div>
+      {commit.review && <p className="mt-2 break-words text-[11px] text-blue-500">{commit.review.approved ? "Manually approved" : "Review updated"} by {commit.review.updatedBy} · {new Date(commit.review.updatedAt).toLocaleString()}{commit.review.mainPrId ? ` · Confirmed main PR #${commit.review.mainPrId}` : ""}</p>}
+      {commit.reviewWarning && <p className="mt-2 text-xs text-orange-700">{commit.reviewWarning}</p>}
+      {canReview && <UiComponentReviewControls commit={commit} runId={runId} onUpdated={onReviewed} />}
     </div>
     <div className="space-y-2">
       {commit.matches.map((match) => <div key={match.prId} className="rounded-lg border border-blue-100 bg-background px-3 py-2">
         <a href={`${repoUrl("ui-components")}/pull-requests/${match.prId}/overview`} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-blue-700 hover:underline">#{match.prId} · {match.title} <ExternalLink className="inline h-3 w-3" /></a>
         <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-blue-500"><span className={`rounded border px-1.5 py-0.5 ${match.state === "MERGED" ? "border-emerald-200 text-emerald-700" : match.state === "OPEN" ? "border-blue-200 text-blue-700" : "border-red-200 text-red-700"}`}>{match.state}</span>
-          <span>{match.reason === "exact-commit" ? "Exact commit SHA" : `Patch suggestion · ${Math.round((match.score ?? 0) * 100)}%`}</span>
+          <span>{match.reason === "exact-commit" ? "Exact commit SHA" : match.reason === "manual-confirmation" ? "Author/admin-confirmed match" : `Patch suggestion · ${Math.round((match.score ?? 0) * 100)}%`}</span>
         </div>
-        {match.reason === "patch-similarity" && <p className="mt-1 text-[11px] text-blue-400">Files {match.matchedFiles}/{match.totalFiles} · Added {match.matchedAddedLines}/{match.totalAddedLines} · Removed {match.matchedRemovedLines}/{match.totalRemovedLines}</p>}
+        {match.score !== null && <p className="mt-1 text-[11px] text-blue-400">Files {match.matchedFiles}/{match.totalFiles} · Added {match.matchedAddedLines}/{match.totalAddedLines} · Removed {match.matchedRemovedLines}/{match.totalRemovedLines}</p>}
       </div>)}
       {!commit.matches.length && <p className="text-xs text-blue-400">{commit.matchStatus === "UNAVAILABLE" ? "Patch analysis unavailable; no exact commit match found." : "No corresponding main PR found in the imported 2026 dataset."}</p>}
       {commit.fingerprintError && <p className="text-xs text-orange-700">{commit.fingerprintStatus === "SKIPPED_500" ? "Diff skipped after a recorded HTTP 500. " : ""}{commit.fingerprintError}</p>}

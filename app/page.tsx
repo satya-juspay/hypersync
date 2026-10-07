@@ -15,10 +15,10 @@ import {
   X,
   ArrowUp,
   ArrowDown,
-  Info,
 } from "lucide-react";
 import { Navbar } from "@/components/navbar";
 import { StatusBadge } from "@/components/status-badge";
+import { SummaryInfo } from "@/components/summary-info";
 import { prUrl } from "@/lib/bitbucket";
 import {
   DASHBOARD_STATUSES,
@@ -768,28 +768,6 @@ function ActiveFilterChip({
       >
         <X className="h-3 w-3" />
       </button>
-    </span>
-  );
-}
-
-function SummaryInfo({ id, text }: { id: string; text: string }) {
-  return (
-    <span className="group relative inline-flex">
-      <button
-        type="button"
-        aria-label="About this metric"
-        aria-describedby={id}
-        className="rounded-full text-slate-400 outline-none transition hover:text-slate-600 focus-visible:ring-2 focus-visible:ring-blue-300"
-      >
-        <Info className="h-3.5 w-3.5" />
-      </button>
-      <span
-        id={id}
-        role="tooltip"
-        className="pointer-events-none invisible absolute left-1/2 top-full z-30 mt-2 w-56 -translate-x-1/2 rounded-lg bg-slate-900 px-3 py-2 text-left text-xs font-normal leading-relaxed text-white opacity-0 shadow-lg transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
-      >
-        {text}
-      </span>
     </span>
   );
 }

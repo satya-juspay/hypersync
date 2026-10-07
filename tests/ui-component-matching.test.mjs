@@ -11,8 +11,9 @@ function compile(path, replacements = {}) {
 }
 const scoreUrl = compile("../lib/patch-score.ts");
 const matchingUrl = compile("../lib/ui-component-matching.ts", { '"./patch-score"': JSON.stringify(scoreUrl) });
+const reviewUrl = compile("../lib/ui-component-review.ts");
 const { matchUiComponentCommit } = await import(matchingUrl);
-const { readUiComponentDashboard } = await import(compile("../lib/ui-component-dashboard.ts", { '"./ui-component-matching"': JSON.stringify(matchingUrl) }));
+const { readUiComponentDashboard } = await import(compile("../lib/ui-component-dashboard.ts", { '"./ui-component-matching"': JSON.stringify(matchingUrl), '"./ui-component-review"': JSON.stringify(reviewUrl) }));
 const sha = "a".repeat(40);
 const token = (prefix, value) => `${prefix}:${createHash("sha256").update(value).digest("base64url")}`;
 const patch = (...tokens) => ({ patchFingerprint: ["v2", ...tokens].join("\n"), fingerprintStatus: "READY", fingerprintError: null });
@@ -55,6 +56,7 @@ test("dashboard reads one published run, deduplicates shared commits, and never 
     uiComponentReleaseSnapshot: { findMany: async ({ where }) => { calls.push(where); return ["release-20260101", "release-20260102"].map((branch) => ({ branch, commits: [{ commit, commitSha: sha }], uiComponentsRef: sha, uiComponentsRefType: "commit", status: "release-commits", warnings: [], uiComponentsBranches: [] })); } },
     uiComponentMainPr: { findMany: async ({ where }) => { calls.push(where); return [{ ...pr(1, "MERGED", [sha]), updatedAt: new Date("2026-01-02") }]; } },
     uiComponentCommitAnalysis: { findMany: async ({ where }) => { calls.push(where); return [{ commitSha: sha, ...full }]; } },
+    uiComponentCommitReview: { findMany: async ({ where }) => { assert.deepEqual(where, { commitSha: { in: [sha] } }); return []; } },
   };
   const result = await readUiComponentDashboard(db);
   assert.ok(calls.every((where) => (where.runId ?? where.id) === "old"));
@@ -62,5 +64,25 @@ test("dashboard reads one published run, deduplicates shared commits, and never 
   assert.equal(result.commits.length, 1);
   assert.deepEqual(result.commits[0].branches, ["release-20260101", "release-20260102"]);
   assert.equal(result.commits[0].matchStatus, "MERGED");
+  assert.equal(result.commits[0].authorEmail, "dev@example.test");
+  assert.equal(result.commits[0].review, null);
+  assert.equal(result.reviewsAvailable, true);
   assert.ok(!JSON.stringify(result).includes("patchFingerprint"));
+
+  const reviewedBy = "reviewer@example.test";
+  db.uiComponentCommitReview.findMany = async () => [{ commitSha: sha, approved: true, mainPrId: null, confirmedSourceSha: null, updatedBy: reviewedBy, updatedAt: new Date("2026-10-07") }];
+  assert.equal((await readUiComponentDashboard(db)).commits[0].matchStatus, "APPROVED");
+  // A new published snapshot containing the same SHA inherits its decision.
+  db.uiComponentSyncStatus.findUnique = async () => ({ activeRunId: "next" });
+  const refreshed = await readUiComponentDashboard(db);
+  assert.equal(refreshed.runId, "next");
+  assert.equal(refreshed.commits[0].review.updatedBy, reviewedBy);
+  assert.equal(refreshed.commits[0].matchStatus, "APPROVED");
+
+  db.uiComponentCommitReview.findMany = async () => { throw Object.assign(new Error("missing table"), { code: "P2021" }); };
+  const beforeMigration = await readUiComponentDashboard(db);
+  assert.equal(beforeMigration.reviewsAvailable, false);
+  assert.equal(beforeMigration.commits[0].matchStatus, "MERGED");
+  db.uiComponentCommitReview.findMany = async () => { throw new Error("connectivity failure"); };
+  await assert.rejects(readUiComponentDashboard(db), /connectivity failure/);
 });
