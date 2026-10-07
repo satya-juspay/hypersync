@@ -55,3 +55,74 @@ model AdminUser {
   createdAt DateTime @default(now())
   createdBy String?
 }
+
+// Isolated UI Components dataset. Existing hyper-widget models above are not
+// reused. Only snapshots belonging to syncStatus.activeRunId are published.
+model UiComponentRefreshRun {
+  id             String                       @id
+  status         String                       @default("RUNNING")
+  startedAt      DateTime                     @default(now())
+  finishedAt     DateTime?
+  error          String?
+  branchManifest String[]                     @default([])
+  branchCount    Int                          @default(0)
+  commitCount    Int                          @default(0)
+  snapshots      UiComponentReleaseSnapshot[]
+  activeFor      UiComponentSyncStatus?       @relation("UiComponentActiveRun")
+
+  @@index([status, startedAt])
+}
+
+model UiComponentSyncStatus {
+  id          String                 @id @default("singleton")
+  runId       String?
+  leaseUntil  DateTime?
+  lastSynced  DateTime?
+  activeRunId String?                @unique
+  activeRun   UiComponentRefreshRun? @relation("UiComponentActiveRun", fields: [activeRunId], references: [id], onDelete: Restrict)
+}
+
+model UiComponentReleaseSnapshot {
+  id                   String                      @id
+  runId                String
+  branch               String
+  widgetHeadSha        String
+  uiComponentsRef      String
+  uiComponentsRefType  String
+  uiComponentsHeadSha  String
+  uiComponentsBranches String[]                    @default([])
+  jenkinsBoundarySha   String?
+  status               String
+  warnings             String[]                    @default([])
+  expectedCommitCount  Int
+  sealed               Boolean                     @default(false)
+  createdAt            DateTime                    @default(now())
+  run                  UiComponentRefreshRun       @relation(fields: [runId], references: [id], onDelete: Restrict)
+  commits              UiComponentSnapshotCommit[]
+
+  @@unique([runId, branch])
+  @@index([branch, createdAt])
+  @@index([uiComponentsHeadSha])
+}
+
+model UiComponentReleaseCommit {
+  sha             String                      @id
+  displayId       String
+  authorName      String?
+  authorEmail     String?
+  authorTimestamp DateTime?
+  message         String
+  parents         String[]                    @default([])
+  createdAt       DateTime                    @default(now())
+  snapshots       UiComponentSnapshotCommit[]
+}
+
+model UiComponentSnapshotCommit {
+  snapshotId String
+  commitSha  String
+  snapshot   UiComponentReleaseSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  commit     UiComponentReleaseCommit   @relation(fields: [commitSha], references: [sha], onDelete: Restrict)
+
+  @@id([snapshotId, commitSha])
+  @@index([commitSha])
+}

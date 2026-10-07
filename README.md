@@ -157,6 +157,39 @@ node cli/hypersync/bin/hypersync.mjs refresh
 npm run refresh
 ```
 
+To inspect hyper-widget `release-2026XXXX` branches and the ui-components ref
+pinned by each branch without writing to the database:
+
+```bash
+npm run --silent discover:ui-components
+```
+
+To also resolve the ui-components heads and list release commits since their
+nearest first-parent Jenkins boundary:
+
+```bash
+npm run --silent inspect:ui-components
+```
+
+This is a separate read-only check; it does not use the web import API or
+change production tables. Version tags are validated without listing custom
+release commits. See the [CLI guide](cli/hypersync/README.md) for cutoff and
+error-handling details.
+
+UI Components has a separate database import command:
+
+```bash
+npm run refresh:ui-components
+```
+
+Apply the prepared additive UI Components migration and deploy the new
+`/api/ui-components/import` endpoint **before** running it. See the
+[deployment checklist](cli/hypersync/README.md#deploying-the-isolated-schema).
+The command stages a full inspection and atomically publishes complete
+snapshots in new `UiComponent*` tables, with its own refresh lease. It does not
+modify existing hyper-widget data. Main-PR import, fingerprint matching, and
+the UI Components dashboard are later phases.
+
 Only one CLI import may run at a time. Its five-minute lease is renewed during
 the run and expires after a crash. Dashboard reads continue during imports.
 

@@ -6,6 +6,10 @@
     "dev": "next dev --webpack",
     "build": "prisma generate && next build",
     "refresh": "node cli/hypersync/bin/hypersync.mjs refresh",
+    "discover:ui-components": "node cli/hypersync/bin/hypersync.mjs discover-ui-components",
+    "inspect:ui-components": "node cli/hypersync/bin/hypersync.mjs inspect-ui-components",
+    "refresh:ui-components": "node cli/hypersync/bin/hypersync.mjs refresh-ui-components",
+    "test:ui-components": "node --test cli/hypersync/test/*.test.mjs tests/ui-component-import-*.test.mjs",
     "start": "next start",
     "lint": "eslint"
   },
