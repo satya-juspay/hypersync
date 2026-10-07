@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { ArrowLeft, ShieldCheck, SunMoon } from "lucide-react";
 import { SignInButton, UserButton, useAuth } from "@clerk/nextjs";
 
@@ -19,6 +20,18 @@ export function Navbar({
   lastSyncedAt,
 }: NavbarProps) {
   const { isSignedIn, isLoaded, userId } = useAuth();
+  const pathname = usePathname();
+  const repositoryLinks = (
+    <nav aria-label="Repositories" className="flex items-center rounded-lg border border-blue-100 bg-surface p-0.5 text-xs font-semibold shadow-sm">
+      {[{ href: "/", label: "hyper-widget", active: !pathname.startsWith("/ui-components") },
+        { href: "/ui-components", label: "ui-components", active: pathname.startsWith("/ui-components") }].map((repo) => (
+        <Link key={repo.href} href={repo.href} aria-current={repo.active ? "page" : undefined}
+          className={`rounded-md px-2.5 py-1.5 transition ${repo.active ? "bg-primary text-white" : "text-blue-500 hover:bg-blue-50 hover:text-blue-700"}`}>
+          {repo.label}
+        </Link>
+      ))}
+    </nav>
+  );
 
   return (
     <header className="sticky top-0 z-50 border-b border-blue-100 bg-surface/90 backdrop-blur-md">
@@ -48,20 +61,7 @@ export function Navbar({
           </span>
         </div>
 
-        <div className="absolute left-1/2 hidden -translate-x-1/2 items-center overflow-visible rounded-lg border border-blue-100 bg-surface p-0.5 text-xs font-semibold shadow-sm lg:flex">
-          <span className="rounded-md bg-primary px-2.5 py-1 text-white">
-            hyper-widget
-          </span>
-          <span className="group relative ml-0.5 cursor-not-allowed rounded-md px-2.5 py-1 text-blue-300" aria-disabled="true">
-            ui-components
-            <span
-              role="tooltip"
-              className="pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max -translate-x-1/2 rounded-md bg-blue-950 px-2 py-1 text-[11px] font-medium text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100"
-            >
-              Releasing soon
-            </span>
-          </span>
-        </div>
+        <div className="absolute left-1/2 hidden -translate-x-1/2 lg:block">{repositoryLinks}</div>
 
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
           {isLoaded && isSignedIn && (
@@ -84,6 +84,7 @@ export function Navbar({
             )
           )}
         </div>
+        <div className="flex w-full items-center justify-between gap-2 lg:hidden">{repositoryLinks}</div>
         <span className="w-full text-right text-xs font-medium text-blue-500 xl:hidden">
           Last sync:{" "}
           <span className="text-blue-800">{formatLastSyncedAt(lastSyncedAt)}</span>

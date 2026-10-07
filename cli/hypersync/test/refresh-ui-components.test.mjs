@@ -35,6 +35,7 @@ function harness(releases = [release()], handler = () => undefined) {
         options.onProgress("Inspected test releases");
         return releases;
       },
+      analysisImpl: async (_config, { commits }) => ({ mainPrs: [], analyses: commits.map((commit) => ({ commitSha: commit.sha, patchFingerprint: "v2", fingerprintStatus: "READY", fingerprintError: null })) }),
       fetchImpl: async (url, options) => {
         assert.equal(url, "https://hypersync.example.test/api/ui-components/import");
         assert.equal(options.method, "POST");
@@ -68,7 +69,7 @@ test("isolated refresh prepares, stages, seals and publishes complete snapshots 
   const finished = await refreshUiComponents(h.options);
   assert.equal(finished.success, true);
   assert.deepEqual(h.actions.map((action) => action.action), [
-    "start", "prepare", "manifest", "commits", "snapshot-commits", "seal", "snapshot-commits", "seal", "seal", "finish",
+    "start", "prepare", "manifest", "commits", "snapshot-commits", "seal", "snapshot-commits", "seal", "seal", "prepare-analysis", "commit-analyses", "finish",
   ]);
   assert.deepEqual(h.actions[1].branches, ["release-20260101", "release-20260102", "release-20260103"]);
   assert.deepEqual(h.actions[2].records.map((item) => item.expectedCommitCount), [1, 1, 0]);
@@ -297,4 +298,23 @@ test("config permits HTTPS and HTTP loopback only, and does not need old refresh
   }
   assert.throws(() => loadUiComponentsRefreshConfig({ ...env, HYPERSYNC_IMPORT_TOKEN: "" }), /Missing HYPERSYNC_IMPORT_TOKEN/);
   assert.throws(() => loadUiComponentsRefreshConfig({ ...env, BITBUCKET_TOKEN: "" }), /Missing BITBUCKET_TOKEN/);
+});
+
+test("an incomplete analysis aborts and never publishes the staged release snapshots", async () => {
+  const h = harness();
+  h.options.analysisImpl = async () => ({ mainPrs: [], analyses: [] });
+  await assert.rejects(refreshUiComponents(h.options), /Incomplete release commit analysis/);
+  assert.equal(h.actions.at(-1).action, "abort");
+  assert.ok(!h.actions.some((item) => item.action === "finish"));
+});
+
+test("main PR fingerprints are size-batched and published before finish", async () => {
+  const h = harness();
+  const prs = Array.from({ length: 30 }, (_, index) => ({ prId: index + 1, title: "界".repeat(9000), patchFingerprint: "x".repeat(200000) }));
+  h.options.analysisImpl = async (_config, { commits }) => ({ mainPrs: prs, analyses: commits.map((commit) => ({ commitSha: commit.sha, patchFingerprint: "v2", fingerprintStatus: "READY", fingerprintError: null })) });
+  await refreshUiComponents(h.options);
+  const batches = h.actions.filter((item) => item.action === "main-prs");
+  assert.ok(batches.length > 1);
+  assert.equal(batches.flatMap((item) => item.records).length, 30);
+  assert.equal(h.actions.at(-1).action, "finish");
 });

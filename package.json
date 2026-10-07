@@ -9,7 +9,7 @@
     "discover:ui-components": "node cli/hypersync/bin/hypersync.mjs discover-ui-components",
     "inspect:ui-components": "node cli/hypersync/bin/hypersync.mjs inspect-ui-components",
     "refresh:ui-components": "node cli/hypersync/bin/hypersync.mjs refresh-ui-components",
-    "test:ui-components": "node --test cli/hypersync/test/*.test.mjs tests/ui-component-import-*.test.mjs",
+    "test:ui-components": "node --test cli/hypersync/test/*.test.mjs tests/ui-component-*.test.mjs",
     "start": "next start",
     "lint": "eslint"
   },

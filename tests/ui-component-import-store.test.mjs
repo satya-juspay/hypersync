@@ -14,8 +14,12 @@ function moduleUrl(path, replacements = {}) {
 
 const validationUrl = moduleUrl("../lib/ui-component-import-validation.ts");
 const { UiComponentImportValidationError } = await import(validationUrl);
+const analysisValidationUrl = moduleUrl("../lib/ui-component-analysis-validation.ts", {
+  '"./ui-component-import-validation"': JSON.stringify(validationUrl),
+});
 const storeUrl = moduleUrl("../lib/ui-component-import-store.ts", {
   '"./ui-component-import-validation"': JSON.stringify(validationUrl),
+  '"./ui-component-analysis-validation"': JSON.stringify(analysisValidationUrl),
 });
 const { createUiComponentImporter, UiComponentImportConflict } = await import(storeUrl);
 
@@ -69,7 +73,7 @@ function commit(sha = HEAD, overrides = {}) {
   };
 }
 
-// Deliberately expose only the five new UI Components delegates. Accessing
+// Deliberately expose only the isolated UI Components delegates. Accessing
 // an existing production table or making a model call outside a transaction
 // fails these tests immediately. Transactions are serialized and roll back
 // all Maps on failure, including any lease extension performed by the guard.
@@ -77,6 +81,7 @@ function fakeDatabase() {
   const models = [
     "uiComponentSyncStatus", "uiComponentRefreshRun", "uiComponentReleaseSnapshot",
     "uiComponentReleaseCommit", "uiComponentSnapshotCommit",
+    "uiComponentMainPr", "uiComponentCommitAnalysis", "uiComponentDiffFailure",
   ];
   let tables = Object.fromEntries(models.map((name) => [name, new Map()]));
   const trace = [];
@@ -84,6 +89,9 @@ function fakeDatabase() {
   let transactionCount = 0;
 
   function key(model, row) {
+    if (model === "uiComponentMainPr") return `${row.runId}:${row.prId}`;
+    if (model === "uiComponentCommitAnalysis") return `${row.runId}:${row.commitSha}`;
+    if (model === "uiComponentDiffFailure") return row.key;
     if (model === "uiComponentReleaseCommit") return row.sha;
     if (model === "uiComponentSnapshotCommit") return `${row.snapshotId}:${row.commitSha}`;
     return row.id;
@@ -92,7 +100,7 @@ function fakeDatabase() {
   function matches(model, row, where = {}) {
     return Object.entries(where).every(([field, condition]) => {
       if (field === "OR") return condition.some((clause) => matches(model, row, clause));
-      if (field === "runId_branch" || field === "snapshotId_commitSha") return matches(model, row, condition);
+      if (["runId_branch", "snapshotId_commitSha", "runId_prId", "runId_commitSha"].includes(field)) return matches(model, row, condition);
       if (field === "snapshots") {
         assert.equal(model, "uiComponentReleaseCommit");
         const runId = condition.some.snapshot.runId;
@@ -116,7 +124,7 @@ function fakeDatabase() {
       return { runId: null, leaseUntil: null, activeRunId: null, lastSynced: null, ...data };
     }
     if (model === "uiComponentRefreshRun") {
-      return { status: "RUNNING", startedAt: new Date(), finishedAt: null, error: null, branchManifest: [], branchCount: 0, commitCount: 0, ...data };
+      return { status: "RUNNING", startedAt: new Date(), finishedAt: null, error: null, branchManifest: [], branchCount: 0, commitCount: 0, analysisVersion: 0, mainPrManifest: [], analysisManifest: [], mainPrCount: 0, ...data };
     }
     if (model === "uiComponentReleaseSnapshot") return { sealed: false, createdAt: new Date(), ...data };
     if (model === "uiComponentReleaseCommit") return { createdAt: new Date(), ...data };
@@ -594,4 +602,71 @@ test("completed run retries remain read-only while a different run holds the lea
   assert.deepEqual(await importer.finish(RUN, 1), completed);
   assert.deepEqual(fake.tables, before);
   assert.equal(fake.tables.uiComponentSyncStatus.get("singleton").runId, OTHER_RUN);
+});
+
+const analysis = (commitSha = HEAD) => ({ commitSha, patchFingerprint: "v2", fingerprintStatus: "READY", fingerprintError: null });
+const mainPr = (prId = 10) => ({ prId, title: "fix: main", state: "MERGED", authorName: "developer",
+  fromBranch: "feature", toBranch: "main", sourceSha: HEAD, targetSha: BOUNDARY, updatedAt: "2026-01-02T00:00:00.000Z",
+  commitShas: [HEAD], patchFingerprint: "v2", fingerprintStatus: "READY", fingerprintError: null });
+
+test("main PRs and all release analyses must be present before atomic publication", async () => {
+  const { importer, fake } = setup({ oldActive: true });
+  await stageOne(importer);
+  await importer.prepareAnalysis(RUN, [10], [HEAD]);
+  await rejects(() => importer.finish(RUN, 1), UiComponentImportValidationError, /Analysis incomplete/);
+  assert.equal(fake.tables.uiComponentSyncStatus.get("singleton").activeRunId, OLD_RUN);
+  await importer.mainPrs(RUN, [mainPr()]);
+  await rejects(() => importer.finish(RUN, 1), UiComponentImportValidationError, /Analysis incomplete/);
+  await importer.commitAnalyses(RUN, [analysis()]);
+  const result = await importer.finish(RUN, 1);
+  assert.equal(result.mainPrs, 1);
+  assert.equal(fake.tables.uiComponentSyncStatus.get("singleton").activeRunId, RUN);
+});
+
+test("analysis manifest must exactly describe linked release commits, including shared deduplication", async () => {
+  const { importer } = setup();
+  await stageOne(importer);
+  await importer.prepareAnalysis(RUN, [], []);
+  await rejects(() => importer.finish(RUN, 1), UiComponentImportValidationError, /Analysis incomplete/);
+  await rejects(() => importer.prepareAnalysis(RUN, [], [HEAD]), UiComponentImportValidationError, /cannot change/);
+});
+
+test("analysis batches are idempotent and cannot change metadata or inject a different run", async () => {
+  const { importer, fake } = setup();
+  await stageOne(importer);
+  await rejects(() => importer.mainPrs(RUN, [mainPr()]), UiComponentImportValidationError, /Prepare analysis/);
+  await importer.prepareAnalysis(RUN, [10], [HEAD]);
+  await importer.mainPrs(RUN, [{ ...mainPr(), runId: OTHER_RUN }]);
+  await importer.commitAnalyses(RUN, [{ ...analysis(), runId: OTHER_RUN }]);
+  assert.equal(fake.tables.uiComponentMainPr.get(`${RUN}:10`).runId, RUN);
+  assert.equal(fake.tables.uiComponentCommitAnalysis.get(`${RUN}:${HEAD}`).runId, RUN);
+  await importer.mainPrs(RUN, [mainPr()]); await importer.commitAnalyses(RUN, [analysis()]);
+  await rejects(() => importer.mainPrs(RUN, [{ ...mainPr(), state: "OPEN" }]), UiComponentImportValidationError, /cannot change/);
+  await rejects(() => importer.commitAnalyses(RUN, [{ ...analysis(), fingerprintStatus: "UNAVAILABLE", patchFingerprint: null, fingerprintError: "truncated" }]), UiComponentImportValidationError, /cannot change/);
+  await rejects(() => importer.mainPrs(RUN, [mainPr(11)]), UiComponentImportValidationError, /not in the manifest/);
+  await rejects(() => importer.commitAnalyses(RUN, [analysis(OTHER_HEAD)]), UiComponentImportValidationError, /not in the manifest/);
+});
+
+test("persisted HTTP 500 markers survive an aborted run and stay guarded by ownership", async () => {
+  const { importer, fake } = setup({ oldActive: true });
+  await importer.start(RUN);
+  await importer.diffFailed(RUN, "pr:10");
+  await importer.diffFailed(RUN, `commit:${HEAD}`);
+  await rejects(() => importer.diffFailed(OTHER_RUN, "pr:11"), UiComponentImportConflict);
+  await rejects(() => importer.diffFailures(OTHER_RUN, ["pr:10"]), UiComponentImportConflict);
+  await importer.abort(RUN);
+  await importer.start(OTHER_RUN);
+  assert.deepEqual((await importer.diffFailures(OTHER_RUN, ["pr:10", "pr:11", `commit:${HEAD}`])).keys.sort(), [`commit:${HEAD}`, "pr:10"].sort());
+  assert.equal(fake.tables.uiComponentSyncStatus.get("singleton").activeRunId, OLD_RUN);
+});
+
+test("older metadata-only CLI cannot replace a dataset containing main PR analysis", async () => {
+  const { importer, fake } = setup();
+  await stageOne(importer);
+  await importer.prepareAnalysis(RUN, [], [HEAD]);
+  await importer.commitAnalyses(RUN, [analysis()]);
+  await importer.finish(RUN, 1);
+  await stageOne(importer, OTHER_RUN);
+  await rejects(() => importer.finish(OTHER_RUN, 1), UiComponentImportValidationError, /Upgrade the CLI/);
+  assert.equal(fake.tables.uiComponentSyncStatus.get("singleton").activeRunId, RUN);
 });

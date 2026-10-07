@@ -11,6 +11,10 @@ import {
   type ImportedUiComponentCommit,
   type ImportedUiComponentSnapshot,
 } from "./ui-component-import-validation";
+import {
+  validatePrIds, validateAnalysisShas, validateMainPrRecords,
+  validateAnalysisRecords, validateDiffFailureKey,
+} from "./ui-component-analysis-validation";
 
 const LEASE_MS = 5 * 60 * 1000;
 const TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 30_000 };
@@ -83,6 +87,70 @@ export function createUiComponentImporter(db: PrismaClient) {
 
     async heartbeat(runId: string) {
       return owned(runId, async () => ({}));
+    },
+
+    async prepareAnalysis(runId: string, prIds: unknown, commitShas: unknown) {
+      validatePrIds(prIds);
+      validateAnalysisShas(commitShas);
+      const mainPrManifest = [...prIds].sort((a, b) => a - b);
+      const analysisManifest = [...commitShas].sort();
+      return owned(runId, async (tx, run) => {
+        if (run.analysisVersion && (!equal(run.mainPrManifest, mainPrManifest) || !equal(run.analysisManifest, analysisManifest))) {
+          throw new UiComponentImportValidationError("Analysis manifest cannot change within a run");
+        }
+        await tx.uiComponentRefreshRun.update({ where: { id: runId }, data: { analysisVersion: 1, mainPrManifest, analysisManifest } });
+        return { mainPrs: mainPrManifest.length, analyses: analysisManifest.length };
+      });
+    },
+
+    async mainPrs(runId: string, records: unknown) {
+      validateMainPrRecords(records);
+      return owned(runId, async (tx, run) => {
+        if (run.analysisVersion !== 1) throw new UiComponentImportValidationError("Prepare analysis first");
+        for (const record of records) {
+          if (!run.mainPrManifest.includes(record.prId)) throw new UiComponentImportValidationError("Main PR is not in the manifest");
+          const data = { prId: record.prId, title: record.title, state: record.state, authorName: record.authorName,
+            fromBranch: record.fromBranch, toBranch: record.toBranch, sourceSha: record.sourceSha, targetSha: record.targetSha,
+            patchFingerprint: record.patchFingerprint, fingerprintStatus: record.fingerprintStatus, fingerprintError: record.fingerprintError,
+            updatedAt: new Date(record.updatedAt), commitShas: [...record.commitShas].sort() };
+          const stored = await tx.uiComponentMainPr.upsert({
+            where: { runId_prId: { runId, prId: record.prId } }, create: { runId, ...data }, update: {},
+          });
+          if (!equal(pick(stored, Object.keys(data)), data)) throw new UiComponentImportValidationError("Main PR metadata cannot change within a run");
+        }
+        return { processed: records.length };
+      });
+    },
+
+    async commitAnalyses(runId: string, records: unknown) {
+      validateAnalysisRecords(records);
+      return owned(runId, async (tx, run) => {
+        if (run.analysisVersion !== 1) throw new UiComponentImportValidationError("Prepare analysis first");
+        for (const record of records) {
+          if (!run.analysisManifest.includes(record.commitSha)) throw new UiComponentImportValidationError("Commit analysis is not in the manifest");
+          const data = { commitSha: record.commitSha, patchFingerprint: record.patchFingerprint,
+            fingerprintStatus: record.fingerprintStatus, fingerprintError: record.fingerprintError };
+          const stored = await tx.uiComponentCommitAnalysis.upsert({
+            where: { runId_commitSha: { runId, commitSha: record.commitSha } }, create: { runId, ...data }, update: {},
+          });
+          if (!equal(pick(stored, Object.keys(data)), data)) throw new UiComponentImportValidationError("Commit analysis cannot change within a run");
+        }
+        return { processed: records.length };
+      });
+    },
+
+    async diffFailures(runId: string, keys: unknown) {
+      if (!Array.isArray(keys) || keys.length > 100) throw new UiComponentImportValidationError("Invalid diff failure keys");
+      keys.forEach(validateDiffFailureKey);
+      return owned(runId, async (tx) => ({ keys: (await tx.uiComponentDiffFailure.findMany({ where: { key: { in: keys } }, select: { key: true } })).map((row) => row.key) }));
+    },
+
+    async diffFailed(runId: string, key: unknown) {
+      validateDiffFailureKey(key);
+      return owned(runId, async (tx) => {
+        await tx.uiComponentDiffFailure.upsert({ where: { key }, create: { key }, update: {} });
+        return {};
+      });
     },
 
     async prepare(runId: string, branches: unknown) {
@@ -194,9 +262,24 @@ export function createUiComponentImporter(db: PrismaClient) {
           throw new UiComponentImportValidationError("Invalid run: every declared snapshot must be complete and sealed");
         }
         const commits = await tx.uiComponentReleaseCommit.count({ where: { snapshots: { some: { snapshot: { runId } } } } });
+        let mainPrCount = 0;
+        if (run.analysisVersion === 1) {
+          const links = await tx.uiComponentSnapshotCommit.findMany({ where: { snapshotId: { in: snapshots.map((snapshot) => snapshot.id) } }, select: { commitSha: true } });
+          const linkedShas = [...new Set(links.map((link) => link.commitSha))].sort();
+          const prs = await tx.uiComponentMainPr.findMany({ where: { runId }, select: { prId: true } });
+          const analyses = await tx.uiComponentCommitAnalysis.findMany({ where: { runId }, select: { commitSha: true } });
+          if (!equal(linkedShas, run.analysisManifest) || !equal(prs.map((row) => row.prId).sort((a, b) => a - b), run.mainPrManifest)
+            || !equal(analyses.map((row) => row.commitSha).sort(), run.analysisManifest)) {
+            throw new UiComponentImportValidationError("Analysis incomplete: every declared main PR and release commit must be staged");
+          }
+          mainPrCount = prs.length;
+        } else if (state.activeRunId) {
+          const active = await tx.uiComponentRefreshRun.findUnique({ where: { id: state.activeRunId } });
+          if (active?.analysisVersion) throw new UiComponentImportValidationError("Upgrade the CLI: main PR analysis is required to replace this dataset");
+        }
         const finishedAt = new Date();
         const completed = await tx.uiComponentRefreshRun.update({
-          where: { id: runId }, data: { status: "COMPLETED", finishedAt, branchCount: snapshots.length, commitCount: commits },
+          where: { id: runId }, data: { status: "COMPLETED", finishedAt, branchCount: snapshots.length, commitCount: commits, mainPrCount },
         });
         await tx.uiComponentSyncStatus.update({
           where: { id: "singleton" }, data: { runId: null, leaseUntil: null, activeRunId: runId, lastSynced: finishedAt },
@@ -240,7 +323,7 @@ function commitData(record: ImportedUiComponentCommit) {
 }
 
 function finishedResult(run: UiComponentRefreshRun) {
-  return { lastSynced: run.finishedAt!.toISOString(), branches: run.branchCount, commits: run.commitCount };
+  return { lastSynced: run.finishedAt!.toISOString(), branches: run.branchCount, commits: run.commitCount, mainPrs: run.mainPrCount ?? 0 };
 }
 
 function equal(left: unknown, right: unknown) { return JSON.stringify(left) === JSON.stringify(right); }

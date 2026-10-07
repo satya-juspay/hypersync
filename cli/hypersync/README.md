@@ -96,21 +96,41 @@ and database credentials, never the Bitbucket token. The new endpoint is
 This is a full inspection on every run, not an incremental PR cursor. It stores
 2026 widget release snapshots, their dependency refs/heads/Jenkins boundaries,
 unique ui-components release commits, and snapshot-to-commit links. Published
-version refs get validated snapshots with no custom release commits. Currently
-this command does **not** fetch ui-components main PRs or fingerprints, and no
-UI Components dashboard is included yet.
+version refs get validated snapshots with no custom release commits. The same
+command also imports all states of ui-components PRs targeting `main` and
+updated on or after `2026-01-01T00:00:00Z`, reads their commit memberships, and
+fingerprints those PRs and every unique release commit. PR discovery scans all
+pages for the main destination so older-created PRs updated in 2026 are included.
+It logs pagination, each diff, upload counts, and final publication.
 
-The importer uses only five new tables: `UiComponentRefreshRun`,
+JSON diffs are used to detect Bitbucket's truncation flags. Hash fingerprints
+retain file and added/removed line tokens for partial patch scoring. Oversized,
+truncated, or failed diffs are recorded as unavailable and do not stop the next
+diff. HTTP 500 is additionally persisted immediately and skipped on subsequent
+runs, including when the current run later aborts. Other unavailable diffs are
+retried on the next refresh. Authentication, connectivity, incomplete metadata,
+or a PR changing during inspection abort publication.
+
+The dashboard at `/ui-components` shows the last completed run, branch and
+commit filters, exact commit matches, patch suggestions, main PR states, and
+file/line overlap counts. A patch score, even at 100%, remains a suggestion;
+only exact membership in a merged main PR sets a commit's merged status. A
+single commit may be used by multiple widget release branches and is counted
+once. Reloading dashboard results never calls Bitbucket.
+
+The importer uses eight isolated tables: `UiComponentRefreshRun`,
 `UiComponentSyncStatus`, `UiComponentReleaseSnapshot`,
-`UiComponentReleaseCommit`, and `UiComponentSnapshotCommit`. To read the
+`UiComponentReleaseCommit`, `UiComponentSnapshotCommit`, `UiComponentMainPr`,
+`UiComponentCommitAnalysis`, and `UiComponentDiffFailure`. To read the
 published dataset, filter snapshots by `UiComponentSyncStatus.activeRunId`,
 not by newest snapshot timestamps. History and failed staging runs are retained.
 Commits are deduplicated by immutable SHA and may belong to several snapshots.
 
 Each run declares its complete branch manifest, stages bounded batches, seals
 each snapshot after checking its unique commit count/head, and publishes
-everything by atomically changing the active run pointer. Empty discoveries or
-any inspection error fail the run and leave the previous dataset active. Failed
+every declared main PR/commit analysis before atomically changing the active
+run pointer. Empty discoveries or any inspection error fail the run and leave
+the previous dataset active. Failed
 containing-branch lookups remain warnings. A separate five-minute lease blocks
 other ui-components refreshes; heartbeats renew it during inspection. An old
 process cannot abort a newer run. Existing hyper-widget refreshes use their own
@@ -118,9 +138,11 @@ tables and lock.
 
 ### Deploying the isolated schema
 
-The additive migration is
-`prisma/migrations-postgresql/20261001000000_ui_component_import/migration.sql`.
-It has been prepared locally, not applied to production. Do not use `db push`,
+The additive migrations are
+`prisma/migrations-postgresql/20261001000000_ui_component_import/migration.sql`
+and `prisma/migrations-postgresql/20261007000000_ui_component_main_matching/migration.sql`.
+The latter adds only UI Components analysis tables and run fields. These files
+are prepared locally; verify their applied status before refreshing. Do not use `db push`,
 `migrate reset`, or `migrate dev` against the shared production database.
 
 From a machine that can reach Supabase, with the intended `DIRECT_URL` set:
@@ -129,7 +151,8 @@ From a machine that can reach Supabase, with the intended `DIRECT_URL` set:
 npx prisma migrate status
 ```
 
-Check that the only pending migration is `20261001000000_ui_component_import`.
+Check that only the intended UI Components migrations are pending
+(`20261001000000_ui_component_import` and/or `20261007000000_ui_component_main_matching`).
 If other migrations are pending, stop and review them: `migrate deploy` applies
 **all** pending migrations. Once that check is satisfactory:
 
@@ -137,7 +160,7 @@ If other migrations are pending, stop and review them: `migrate deploy` applies
 npx prisma migrate deploy
 ```
 
-Deploy the web app version containing the new endpoint, then run
+Deploy the web app version containing the new endpoint and dashboard, then run
 `npm run refresh:ui-components` locally. The CLI logs each phase and sealed
 branch. This migration and command do not modify existing hyper-widget data.
 

@@ -59,16 +59,22 @@ model AdminUser {
 // Isolated UI Components dataset. Existing hyper-widget models above are not
 // reused. Only snapshots belonging to syncStatus.activeRunId are published.
 model UiComponentRefreshRun {
-  id             String                       @id
-  status         String                       @default("RUNNING")
-  startedAt      DateTime                     @default(now())
-  finishedAt     DateTime?
-  error          String?
-  branchManifest String[]                     @default([])
-  branchCount    Int                          @default(0)
-  commitCount    Int                          @default(0)
-  snapshots      UiComponentReleaseSnapshot[]
-  activeFor      UiComponentSyncStatus?       @relation("UiComponentActiveRun")
+  id               String                       @id
+  status           String                       @default("RUNNING")
+  startedAt        DateTime                     @default(now())
+  finishedAt       DateTime?
+  error            String?
+  branchManifest   String[]                     @default([])
+  branchCount      Int                          @default(0)
+  commitCount      Int                          @default(0)
+  analysisVersion  Int                          @default(0)
+  mainPrManifest   Int[]                        @default([])
+  analysisManifest String[]                     @default([])
+  mainPrCount      Int                          @default(0)
+  mainPrs          UiComponentMainPr[]
+  analyses         UiComponentCommitAnalysis[]
+  snapshots        UiComponentReleaseSnapshot[]
+  activeFor        UiComponentSyncStatus?       @relation("UiComponentActiveRun")
 
   @@index([status, startedAt])
 }
@@ -115,6 +121,7 @@ model UiComponentReleaseCommit {
   parents         String[]                    @default([])
   createdAt       DateTime                    @default(now())
   snapshots       UiComponentSnapshotCommit[]
+  analyses        UiComponentCommitAnalysis[]
 }
 
 model UiComponentSnapshotCommit {
@@ -125,4 +132,43 @@ model UiComponentSnapshotCommit {
 
   @@id([snapshotId, commitSha])
   @@index([commitSha])
+}
+
+model UiComponentMainPr {
+  runId             String
+  prId              Int
+  title             String
+  state             String
+  authorName        String
+  fromBranch        String
+  toBranch          String
+  sourceSha         String
+  targetSha         String
+  updatedAt         DateTime
+  commitShas        String[]              @default([])
+  patchFingerprint  String?
+  fingerprintStatus String
+  fingerprintError  String?
+  run               UiComponentRefreshRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+
+  @@id([runId, prId])
+}
+
+model UiComponentCommitAnalysis {
+  runId             String
+  commitSha         String
+  patchFingerprint  String?
+  fingerprintStatus String
+  fingerprintError  String?
+  run               UiComponentRefreshRun    @relation(fields: [runId], references: [id], onDelete: Restrict)
+  commit            UiComponentReleaseCommit @relation(fields: [commitSha], references: [sha], onDelete: Restrict)
+
+  @@id([runId, commitSha])
+  @@index([commitSha])
+}
+
+// A failed diff remains skipped across runs, even if its refresh later aborts.
+model UiComponentDiffFailure {
+  key       String   @id
+  createdAt DateTime @default(now())
 }

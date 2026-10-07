@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { loadDiscoveryConfig } from "./discover-ui-components.mjs";
 import { inspectUiComponents, isJenkinsAuthor } from "./inspect-ui-components.mjs";
+import { analyzeUiComponents } from "./analyze-ui-components.mjs";
 
 const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 const RELEASE_BRANCH = /^release-2026\d{4}$/;
@@ -27,6 +28,7 @@ export async function refreshUiComponents({
   config = loadUiComponentsRefreshConfig(),
   fetchImpl = fetch,
   inspectImpl = inspectUiComponents,
+  analysisImpl = analyzeUiComponents,
   onProgress = console.log,
   heartbeatMs = 60_000,
   requestTimeoutMs = 30_000,
@@ -186,12 +188,34 @@ export async function refreshUiComponents({
       onProgress(`Sealed ${snapshot.branch}: ${expected} release commits`);
     }
 
+    const analysis = await analysisImpl(config.discovery, { commits: dataset.commits, fetchImpl: guardedFetch, send, onProgress });
+    assertLease();
+    if (!Array.isArray(analysis?.mainPrs) || !Array.isArray(analysis?.analyses)) throw new Error("Invalid UI Components analysis result");
+    const prIds = analysis.mainPrs.map((pr) => pr.prId).sort((a, b) => a - b);
+    const analysisShas = analysis.analyses.map((row) => row.commitSha).sort();
+    if (JSON.stringify(analysisShas) !== JSON.stringify(dataset.commits.map((commit) => commit.sha).sort())) throw new Error("Incomplete release commit analysis");
+    const mainPrBatches = batches(analysis.mainPrs, 25, (records) => ({ action: "main-prs", runId, records }));
+    const analysisBatches = batches(analysis.analyses, 25, (records) => ({ action: "commit-analyses", runId, records }));
+    await send({ action: "prepare-analysis", prIds, commitShas: analysisShas });
+    uploaded = 0;
+    for (const records of mainPrBatches) {
+      await send({ action: "main-prs", records });
+      uploaded += records.length;
+      onProgress(`Uploaded main PR analysis: ${uploaded}/${analysis.mainPrs.length}`);
+    }
+    uploaded = 0;
+    for (const records of analysisBatches) {
+      await send({ action: "commit-analyses", records });
+      uploaded += records.length;
+      onProgress(`Uploaded release commit analysis: ${uploaded}/${analysis.analyses.length}`);
+    }
+
     await stopHeartbeat();
     assertLease();
     const finished = await send({ action: "finish", expectedBranches: dataset.manifest.length });
     started = false;
     startAttempted = false;
-    onProgress(`UI Components refresh complete: ${finished.branches} branches, ${finished.commits} unique commits; synced ${finished.lastSynced}`);
+    onProgress(`UI Components refresh complete: ${finished.branches} branches, ${finished.commits} unique commits, ${finished.mainPrs ?? analysis.mainPrs.length} main PRs; synced ${finished.lastSynced}`);
     return finished;
   } catch (error) {
     await stopHeartbeat(true);

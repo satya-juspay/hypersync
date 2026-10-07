@@ -187,8 +187,17 @@ Apply the prepared additive UI Components migration and deploy the new
 [deployment checklist](cli/hypersync/README.md#deploying-the-isolated-schema).
 The command stages a full inspection and atomically publishes complete
 snapshots in new `UiComponent*` tables, with its own refresh lease. It does not
-modify existing hyper-widget data. Main-PR import, fingerprint matching, and
-the UI Components dashboard are later phases.
+modify existing hyper-widget data. The same command imports ui-components PRs
+targeting `main` and updated since January 1, 2026 (all states), fingerprints
+each release commit and main PR, and publishes their analyses together.
+
+Open `/ui-components` using the repository switcher to review release branches,
+shared release commits, and matching main PRs with their statuses. Exact commit
+membership in a merged PR is marked merged; patch similarity remains a review
+suggestion, including at 100%. Files and added/removed line counts accompany
+each patch score. Version dependencies appear without custom release commits.
+Diff HTTP 500 failures are persisted and skipped in later refreshes; truncated
+or otherwise unavailable diffs stay visibly unavailable.
 
 Only one CLI import may run at a time. Its five-minute lease is renewed during
 the run and expires after a crash. Dashboard reads continue during imports.

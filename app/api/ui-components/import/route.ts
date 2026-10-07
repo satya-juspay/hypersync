@@ -51,6 +51,11 @@ export async function POST(request: Request) {
     switch (body.action) {
       case "start": result = await uiComponentImporter.start(runId); break;
       case "heartbeat": result = await uiComponentImporter.heartbeat(runId); break;
+      case "prepare-analysis": result = await uiComponentImporter.prepareAnalysis(runId, body.prIds, body.commitShas); break;
+      case "main-prs": result = await uiComponentImporter.mainPrs(runId, body.records); break;
+      case "commit-analyses": result = await uiComponentImporter.commitAnalyses(runId, body.records); break;
+      case "diff-failures": result = await uiComponentImporter.diffFailures(runId, body.keys); break;
+      case "diff-failed": result = await uiComponentImporter.diffFailed(runId, body.key); break;
       case "prepare": result = await uiComponentImporter.prepare(runId, body.branches); break;
       case "manifest": result = await uiComponentImporter.manifest(runId, body.records); break;
       case "commits": result = await uiComponentImporter.commits(runId, body.records); break;
