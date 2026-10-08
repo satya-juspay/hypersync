@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   RefreshCw,
@@ -18,7 +18,8 @@ import {
 } from "lucide-react";
 import { Navbar } from "@/components/navbar";
 import { StatusBadge } from "@/components/status-badge";
-import { SummaryInfo } from "@/components/summary-info";
+import { SummaryFilterCard } from "@/components/summary-filter-card";
+import { DashboardRiskLeaderboard } from "@/components/dashboard-risk-leaderboard";
 import { prUrl } from "@/lib/bitbucket";
 import {
   DASHBOARD_STATUSES,
@@ -138,14 +139,6 @@ export default function Home() {
     });
   };
 
-  const rankColors = [
-    "from-red-500 to-red-400",
-    "from-orange-500 to-amber-400",
-    "from-amber-400 to-yellow-300",
-    "from-blue-500 to-blue-400",
-    "from-violet-500 to-violet-400",
-  ];
-
   return (
     <div className="min-h-screen bg-background">
       <Navbar lastSyncedAt={syncStatus.lastSyncedAt} />
@@ -221,101 +214,13 @@ export default function Home() {
         </div>
 
         {/* SECTION 3 — RISK LEADERBOARD */}
-        <div className="rounded-xl border border-blue-100 bg-surface shadow-sm">
-          <div className="border-b border-blue-50 bg-blue-50/60 px-5 py-3">
-            <h2 className="text-sm font-semibold text-blue-800">
-              🏆 Top Risk Contributors — Unsynced PRs
-            </h2>
-          </div>
-          <div className="p-5">
-            {leaderboard.length > 0 ? (
-              <div className="flex gap-4 overflow-x-auto pb-1">
-                {leaderboard.map(([author, count], i) => (
-                  <button
-                    type="button"
-                    key={author}
-                    aria-pressed={contributorFilter === author}
-                    onClick={() => applyContributorPreset(author)}
-                    className={`flex shrink-0 items-center gap-3 rounded-xl border bg-blue-50/40 px-5 py-4 text-left outline-none transition hover:bg-blue-50 focus-visible:ring-2 focus-visible:ring-blue-400 ${
-                      contributorFilter === author
-                        ? "border-blue-400 ring-2 ring-blue-300"
-                        : "border-blue-100"
-                    }`}
-                  >
-                    <div
-                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${
-                        rankColors[i] ?? "from-slate-400 to-slate-300"
-                      } text-sm font-bold text-white shadow`}
-                    >
-                      #{i + 1}
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-slate-800">{author}</p>
-                      <p className="text-xs text-slate-500">
-                        {count} unsynced PR{count > 1 ? "s" : ""}
-                      </p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              !loading && (
-                <p className="text-center text-sm font-medium text-emerald-600">
-                  🎉 All release PRs are synced. Baseline alignment achieved!
-                </p>
-              )
-            )}
-          </div>
-        </div>
+        <DashboardRiskLeaderboard title="🏆 Top Risk Contributors — Unsynced PRs"
+          entries={leaderboard} selected={contributorFilter} onSelect={applyContributorPreset}
+          unit="PR" loading={loading} emptyMessage="🎉 All release PRs are synced. Baseline alignment achieved!" />
 
-        <div className="rounded-xl border border-blue-100 bg-surface shadow-sm">
-          <div className="border-b border-blue-50 bg-blue-50/60 px-5 py-3">
-            <h2 className="text-sm font-semibold text-blue-800">
-              Top Release Branches — Unsynced PRs
-            </h2>
-          </div>
-          <div className="p-5">
-            {branchLeaderboard.length > 0 ? (
-              <div className="flex gap-4 overflow-x-auto pb-1">
-                {branchLeaderboard.map(([releaseBranch, count], i) => (
-                  <button
-                    type="button"
-                    key={releaseBranch}
-                    aria-pressed={releaseBranchFilter === releaseBranch}
-                    onClick={() => applyReleaseBranchPreset(releaseBranch)}
-                    className={`flex shrink-0 items-center gap-3 rounded-xl border bg-blue-50/40 px-5 py-4 text-left outline-none transition hover:bg-blue-50 focus-visible:ring-2 focus-visible:ring-blue-400 ${
-                      releaseBranchFilter === releaseBranch
-                        ? "border-blue-400 ring-2 ring-blue-300"
-                        : "border-blue-100"
-                    }`}
-                  >
-                    <div
-                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${
-                        rankColors[i] ?? "from-slate-400 to-slate-300"
-                      } text-sm font-bold text-white shadow`}
-                    >
-                      #{i + 1}
-                    </div>
-                    <div>
-                      <p className="font-mono text-sm font-semibold text-slate-800">
-                        {releaseBranch}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {count} unsynced PR{count > 1 ? "s" : ""}
-                      </p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              !loading && (
-                <p className="text-center text-sm font-medium text-emerald-600">
-                  All release branches are synced.
-                </p>
-              )
-            )}
-          </div>
-        </div>
+        <DashboardRiskLeaderboard title="Top Release Branches — Unsynced PRs"
+          entries={branchLeaderboard} selected={releaseBranchFilter} onSelect={applyReleaseBranchPreset}
+          unit="PR" loading={loading} monospace emptyMessage="All release branches are synced." />
 
         {/* SECTION 4 — SEARCH */}
         <div className="space-y-2">
@@ -680,62 +585,6 @@ export default function Home() {
           </>
         )}
       </main>
-    </div>
-  );
-}
-
-type SummaryFilterCardProps = {
-  label: string;
-  value: number;
-  infoId: string;
-  infoText: string;
-  icon: ReactNode;
-  cardClassName: string;
-  labelClassName: string;
-  valueClassName: string;
-  activeClassName: string;
-  active: boolean;
-  onSelect: () => void;
-};
-
-function SummaryFilterCard({
-  label,
-  value,
-  infoId,
-  infoText,
-  icon,
-  cardClassName,
-  labelClassName,
-  valueClassName,
-  activeClassName,
-  active,
-  onSelect,
-}: SummaryFilterCardProps) {
-  return (
-    <div
-      className={`relative rounded-xl border p-5 shadow-sm transition hover:shadow-md ${cardClassName} ${
-        active ? `ring-2 ${activeClassName}` : ""
-      }`}
-    >
-      <button
-        type="button"
-        aria-label={`Filter by ${label}`}
-        aria-pressed={active}
-        onClick={onSelect}
-        className="absolute inset-0 z-0 cursor-pointer rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
-      />
-      <div className="pointer-events-none relative z-10">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <p className={`text-sm font-medium ${labelClassName}`}>{label}</p>
-            <span className="pointer-events-auto">
-              <SummaryInfo id={infoId} text={infoText} />
-            </span>
-          </div>
-          {icon}
-        </div>
-        <p className={`mt-2 text-4xl font-bold ${valueClassName}`}>{value}</p>
-      </div>
     </div>
   );
 }

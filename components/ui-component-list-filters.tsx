@@ -1,18 +1,20 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, Filter, Search, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Filter, RefreshCw, Search, X } from "lucide-react";
 import {
   UI_COMPONENT_PAGE_SIZES, UI_COMPONENT_SORT_OPTIONS, UI_COMPONENT_STATUSES,
   UI_COMPONENT_STATUS_LABELS, sameUiComponentStatuses, type UiComponentListView,
 } from "@/lib/ui-component-filters";
 
-export function UiComponentListFilters({ view, authors, branches, total, onChange }: {
+export function UiComponentListFilters({ view, authors, branches, total, onChange, onReload, loading }: {
   view: UiComponentListView;
   authors: string[];
   branches: string[];
   total: number;
   onChange: (patch: Partial<UiComponentListView>) => void;
+  onReload: () => Promise<void>;
+  loading: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -112,6 +114,10 @@ export function UiComponentListFilters({ view, authors, branches, total, onChang
           </select>
         </label>
         <p className="text-xs text-blue-400">Showing <strong className="text-blue-700">{start}–{end}</strong> of <strong className="text-blue-700">{total}</strong> commits</p>
+        <button type="button" aria-label="Reload results" title="Reload results" onClick={() => void onReload()} disabled={loading}
+          className="rounded-lg border border-blue-200 bg-surface p-1.5 text-blue-600 shadow-sm transition hover:bg-blue-50 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300">
+          <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+        </button>
       </div>
     </div>
     {hasFilters && <div className="flex flex-wrap items-center gap-2">
